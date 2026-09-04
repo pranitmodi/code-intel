@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "local-code-intelligence": {
+      "command": "code-intel",
+      "args": ["mcp", "--repo", "${workspaceFolder}"]
+    }
+  }
+}

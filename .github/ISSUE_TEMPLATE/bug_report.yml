@@ -1,0 +1,39 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for the report. Do not paste secrets, API keys, or private source from a repo you indexed.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. code-intel setup --repo …
+        2. code-intel search "…"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: code-intel version / commit
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: code-intel doctor output
+      description: Paste the non-sensitive lines from `code-intel doctor`.
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 15, Ubuntu 24.04, …
