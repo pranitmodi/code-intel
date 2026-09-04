@@ -4,6 +4,14 @@
   "description": "Local-first semantic code indexing and retrieval server, exposed to AI agents via MCP.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pranitmodi/code-intel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pranitmodi/code-intel/issues"
+  },
+  "homepage": "https://github.com/pranitmodi/code-intel#readme",
   "engines": {
     "node": ">=20"
   },

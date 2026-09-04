@@ -17,7 +17,7 @@ ollama serve   # if it is not already running
 ## Setup
 
 ```bash
-git clone https://github.com/<your-fork>/code-intel.git
+git clone https://github.com/pranitmodi/code-intel.git
 cd code-intel
 npm install
 npm run build

@@ -1,1 +1,5 @@
 blank_issues_enabled: true
+contact_links:
+  - name: Usage questions
+    url: https://github.com/pranitmodi/code-intel/issues/new
+    about: Open an issue if you are stuck installing or wiring MCP.
