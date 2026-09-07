@@ -24,7 +24,7 @@ export function watchIgnorePatterns(): string[] {
  */
 export async function watchRepo(
   context: AppContext,
-  options: { onIndex?: (summary: IndexSummary) => void } = {}
+  options: { onIndex?: (summary: IndexSummary) => void; immediate?: boolean } = {}
 ): Promise<() => Promise<void>> {
   const indexer = new Indexer({
     repoRoot: context.repoRoot,
@@ -93,6 +93,7 @@ export async function watchRepo(
   );
 
   logger.info(`[WATCH] watching ${context.repoRoot} (debounce ${debounceMs}ms)`);
+  if (options.immediate) void run();
 
   return async () => {
     if (timer) clearTimeout(timer);

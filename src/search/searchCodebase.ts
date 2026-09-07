@@ -3,6 +3,7 @@ import { normalizeVector } from '../embeddings/vectorMath.js';
 import type { SearchConfig } from '../config/types.js';
 import type { LanceVectorStore } from '../vector-store/LanceVectorStore.js';
 import type { ChunkSearchResult } from '../vector-store/schema.js';
+import { estimateTokensFromChars } from '../utils/tokens.js';
 
 export interface SearchOptions {
   limit?: number;
@@ -19,7 +20,6 @@ export interface SearchResultItem {
   content: string;
 }
 
-const CHARS_PER_TOKEN = 4;
 
 /** Hybrid ranking: LanceDB vector search + LanceDB full-text search, blended with the configured weights (spec section 16). */
 export async function searchCodebase(
@@ -68,7 +68,7 @@ export async function searchCodebase(
   for (const { record, score } of scored) {
     if (results.length >= limit) break;
     if (score < minScore) continue;
-    const estimatedTokens = Math.ceil(record.content.length / CHARS_PER_TOKEN);
+    const estimatedTokens = estimateTokensFromChars(record.content.length);
     if (options.maxTokens && results.length > 0 && tokenBudget + estimatedTokens > options.maxTokens) break;
     tokenBudget += estimatedTokens;
     results.push({

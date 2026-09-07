@@ -14,6 +14,8 @@ export interface IndexingConfig {
   maxChunkTokens: number;
   chunkOverlap: number;
   debounceMs: number;
+  /** When true, `code-intel mcp` starts incremental file watchers for indexed repos under the workspace. */
+  watch: boolean;
 }
 
 export interface SearchConfig {
@@ -52,6 +54,7 @@ export interface RawConfigFile {
     max_chunk_tokens: number;
     chunk_overlap: number;
     debounce_ms: number;
+    watch: boolean;
   }>;
   search?: Partial<{
     default_limit: number;

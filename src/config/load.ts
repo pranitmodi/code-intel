@@ -34,7 +34,8 @@ function applyRawConfig(base: CodeIntelConfig, raw: RawConfigFile | undefined): 
     indexing: {
       maxChunkTokens: raw.indexing?.max_chunk_tokens ?? base.indexing.maxChunkTokens,
       chunkOverlap: raw.indexing?.chunk_overlap ?? base.indexing.chunkOverlap,
-      debounceMs: raw.indexing?.debounce_ms ?? base.indexing.debounceMs
+      debounceMs: raw.indexing?.debounce_ms ?? base.indexing.debounceMs,
+      watch: raw.indexing?.watch ?? base.indexing.watch
     },
     search: {
       defaultLimit: raw.search?.default_limit ?? base.search.defaultLimit,
@@ -49,8 +50,17 @@ function applyRawConfig(base: CodeIntelConfig, raw: RawConfigFile | undefined): 
   };
 }
 
+function parseWatchEnv(value: string | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (['0', 'false', 'off', 'no'].includes(normalized)) return false;
+  if (['1', 'true', 'on', 'yes'].includes(normalized)) return true;
+  return undefined;
+}
+
 function applyEnvOverrides(config: CodeIntelConfig): CodeIntelConfig {
   const env = process.env;
+  const watch = parseWatchEnv(env.CODE_INTEL_WATCH);
   return {
     ...config,
     embedding: {
@@ -61,6 +71,10 @@ function applyEnvOverrides(config: CodeIntelConfig): CodeIntelConfig {
     database: {
       ...config.database,
       path: env.CODE_INTEL_DB_PATH ?? config.database.path
+    },
+    indexing: {
+      ...config.indexing,
+      ...(watch !== undefined ? { watch } : {})
     }
   };
 }

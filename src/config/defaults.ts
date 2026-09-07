@@ -13,7 +13,8 @@ export const DEFAULT_CONFIG: CodeIntelConfig = {
   indexing: {
     maxChunkTokens: 800,
     chunkOverlap: 100,
-    debounceMs: 1000
+    debounceMs: 1000,
+    watch: true
   },
   search: {
     defaultLimit: 10,

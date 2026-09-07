@@ -18,6 +18,9 @@ import { searchSymbol } from '../search/searchSymbol.js';
 import { getFileContext } from '../search/getFileContext.js';
 import { startMcpServer } from '../mcp/server.js';
 import { formatBytes } from '../utils/dirSize.js';
+import { runSavingsBenchmark } from '../usage/benchmark.js';
+import { formatSavingsReport, summarizeUsage } from '../usage/report.js';
+import { readBenchmark, readUsageEvents } from '../usage/store.js';
 
 const program = new Command();
 program
@@ -333,6 +336,31 @@ program
   });
 
 program
+  .command('savings')
+  .description('Estimate token and dollar savings vs workspace-wide Grep/Glob/Read')
+  .option('--benchmark', 're-run the A/B experiment on every indexed repository')
+  .option('--rate <dollars>', 'dollars per million input tokens', (v) => Number.parseFloat(v), 3)
+  .option('--turns <n>', 'conversation length used to compound a dump that stays in context', (v) => Number.parseInt(v, 10), 15)
+  .option('--json', 'print JSON instead of text')
+  .action(async (options: { benchmark?: boolean; rate: number; turns: number; json?: boolean }) => {
+    if (options.benchmark) {
+      await runSavingsBenchmark((line) => {
+        if (!options.json) console.error(line);
+      });
+    }
+    const report = summarizeUsage(
+      readUsageEvents(),
+      { ratePerMillion: options.rate, turns: options.turns },
+      readBenchmark()
+    );
+    if (options.json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(formatSavingsReport(report));
+  });
+
+program
   .command('cursor-install')
   .description('Register the MCP server and user rule in ~/.cursor (merges existing mcp.json)')
   .action(() => {
@@ -347,11 +375,12 @@ program
 
 program
   .command('mcp')
-  .description('Start the MCP server over stdio')
-  .action(async () => {
+  .description('Start the MCP server over stdio (watches indexed repos under the workspace by default)')
+  .option('--no-watch', 'do not start incremental file watchers')
+  .action(async (options: { watch?: boolean }) => {
     const opts = program.opts<{ repo?: string }>();
     const repoRoot = opts.repo && existsSync(resolve(opts.repo)) ? resolve(opts.repo) : resolveRepoRoot();
-    await startMcpServer(repoRoot);
+    await startMcpServer(repoRoot, { watch: options.watch !== false });
   });
 
 program.parseAsync(process.argv);

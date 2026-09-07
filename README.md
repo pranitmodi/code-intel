@@ -30,9 +30,32 @@ Each stage is an independent module (`src/discovery`, `src/parser`, `src/chunker
 Requires Node.js 20+ and [Ollama](https://ollama.com/download).
 
 ```bash
+npm install -g @pranitmodi/code-intel
+ollama pull nomic-embed-text
+code-intel doctor
+code-intel cursor-install          # wires Cursor MCP + the local-search rule
+cd /path/to/your-project
+code-intel setup                   # index this repo locally
+```
+
+The package is scoped (`@pranitmodi/code-intel`) because npm rejected unscoped `code-intel` as too similar to existing [`codeintel`](https://www.npmjs.com/package/codeintel). The installed command is still `code-intel`.
+
+Reload MCP in Cursor (Settings → MCP). After that, agents query the local index instead of re-scanning the tree.
+
+Without a global install you can use `npx`:
+
+```bash
+npx -y @pranitmodi/code-intel doctor
+npx -y @pranitmodi/code-intel setup --repo /path/to/your-project
+npx -y @pranitmodi/code-intel cursor-install
+```
+
+From a git checkout (contributors):
+
+```bash
 npm install
 npm run build
-npm link          # installs a global `code-intel` command from this checkout
+npm link
 ```
 
 ## Ollama setup
@@ -57,7 +80,7 @@ Or the two-step form: `code-intel init` then `code-intel index`.
 
 The index lives outside your repo by default (see **Database location**), so nothing is written into your project and no `.gitignore` changes are needed.
 
-Re-run `code-intel index` any time after editing files — only new/changed chunks are re-embedded. For a live loop, `code-intel watch` re-indexes incrementally after a quiet period (`indexing.debounce_ms`, default 1s).
+Re-run `code-intel index` any time after editing files — only new/changed chunks are re-embedded. The MCP server starts incremental watchers by default for every indexed repo under the workspace (including child projects in a parent folder). Edits are re-indexed after a quiet period (`indexing.debounce_ms`, default 1s), and unchanged chunks are never re-embedded. `code-intel watch` is the same loop as a standalone process; `code-intel mcp --no-watch` or `indexing.watch: false` turns it off.
 
 ## CLI usage
 
@@ -75,10 +98,23 @@ code-intel doctor                  diagnose Ollama/model/database health
 code-intel rebuild                 wipe and fully re-index
 code-intel clean                   remove the local index (not your source)
 code-intel cursor-install          merge ~/.cursor/mcp.json and write the user rule
-code-intel mcp                     start the MCP server over stdio
+code-intel mcp                     start the MCP server over stdio (watch on by default)
+code-intel mcp --no-watch          start the MCP server without file watchers
+code-intel savings                 estimate token/$ savings vs tree scans
+code-intel savings --benchmark     re-run the Grep vs search A/B on indexed repos
 ```
 
 Every command accepts `--repo <path>` to target a repository other than the current directory — this is what makes MCP configuration below work regardless of the IDE's spawn working directory.
+
+## Measuring savings
+
+`code-intel savings` compares local retrieval to a typical agent tree scan (workspace Glob + `rg -C 2` + reading the first 12 matching files). It does **not** see Cursor's invoice; it estimates input tokens that never reach the model.
+
+```bash
+code-intel savings --benchmark --rate 3 --turns 15
+```
+
+`--benchmark` runs that A/B on every indexed repo (needs Ollama and `rg`). Live MCP searches and blocked workspace Grep/Glob (from `cursor-install` hooks) append to `~/.local-code-intelligence/usage.jsonl`. Re-run `code-intel savings` after a real coding session to see session totals. Dollar figures use `--rate` as dollars per million **input** tokens (default `$3`, a Sonnet-class list price). `--turns` compounds a dump that would have stayed in the chat.
 
 ## MCP configuration
 
@@ -101,7 +137,7 @@ Reload/trust the server when prompted, then ask Copilot Chat to use the tools (o
 
 ### Cursor
 
-The reliable setup is one command from this checkout (after `npm run build`):
+The reliable setup after `npm install -g code-intel` (or `npm link` from a checkout):
 
 ```bash
 code-intel cursor-install
@@ -114,7 +150,7 @@ That merges `~/.cursor/mcp.json` (it will not drop other MCP servers), writes an
 
 Then reload MCP in Cursor (Settings → MCP).
 
-The checked-in example is [examples/mcp/cursor.mcp.json](examples/mcp/cursor.mcp.json) (`code-intel mcp --repo ${workspaceFolder}`). `cursor-install` writes an equivalent server entry that points at this checkout's `dist/cli/index.js` so it does not depend on `npm link`. Tools accept an optional `repo` (path, id, or basename) so a parent workspace can query indexed children.
+The checked-in example is [examples/mcp/cursor.mcp.json](examples/mcp/cursor.mcp.json) (`code-intel mcp --repo ${workspaceFolder}`). `cursor-install` writes an equivalent server entry that points at the installed package's `dist/cli/index.js` (so Cursor does not need `code-intel` on its GUI `PATH`). Tools accept an optional `repo` (path, id, or basename) so a parent workspace can query indexed children. The server starts file watchers for those indexed repos by default so new and edited code is chunked incrementally.
 
 Note the different top-level key (`mcpServers` vs VS Code's `servers`) — this is a real difference between the two clients' config formats, not a typo.
 
@@ -132,7 +168,7 @@ Default: `~/.local-code-intelligence/repos/<repo-id>/{db,metadata,state.json,log
 
 ## Configuration
 
-`.code-intel/config.yaml` (repo-level) or `~/.local-code-intelligence/config.yaml` (global), merged over built-in defaults, then overridden by environment variables (`CODE_INTEL_EMBEDDING_MODEL`, `CODE_INTEL_EMBEDDING_HOST`, `CODE_INTEL_DB_PATH`):
+`.code-intel/config.yaml` (repo-level) or `~/.local-code-intelligence/config.yaml` (global), merged over built-in defaults, then overridden by environment variables (`CODE_INTEL_EMBEDDING_MODEL`, `CODE_INTEL_EMBEDDING_HOST`, `CODE_INTEL_DB_PATH`, `CODE_INTEL_WATCH`):
 
 ```yaml
 embedding:
@@ -145,6 +181,7 @@ indexing:
   max_chunk_tokens: 800
   chunk_overlap: 100
   debounce_ms: 1000
+  watch: true
 search:
   default_limit: 10
   vector_weight: 0.7
@@ -166,7 +203,7 @@ ignore: []
 
 - Structural chunking with per-chunk content hashing means only edited chunks are re-embedded, not the whole file.
 - No automatic vector ANN index is built by default — brute-force kNN is fine up to a few hundred thousand chunks; add one later if a repository grows beyond that.
-- A single-writer PID lock file prevents two `index`/`watch` processes from corrupting the same repo's index concurrently; the `mcp` command only reads.
+- A single-writer PID lock file prevents two `index`/`watch` processes from corrupting the same repo's index concurrently. The `mcp` command reads the index and, by default, incrementally writes when watched files change.
 
 ## Development
 

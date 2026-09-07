@@ -1,9 +1,21 @@
 {
-  "name": "code-intel",
+  "name": "@pranitmodi/code-intel",
   "version": "0.1.0",
   "description": "Local-first semantic code indexing and retrieval server, exposed to AI agents via MCP.",
   "type": "module",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "mcp",
+    "ollama",
+    "lancedb",
+    "embeddings",
+    "cursor",
+    "code-search",
+    "local-first"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pranitmodi/code-intel.git"
@@ -16,10 +28,12 @@
     "node": ">=20"
   },
   "bin": {
-    "code-intel": "./dist/cli/index.js"
+    "code-intel": "dist/cli/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -27,7 +41,8 @@
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm run test:unit"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.38.0",

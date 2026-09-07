@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { recordDeniedScan } from '../usage/record.js';
 import { shouldDenyTreeScan, TREE_SCAN_DENY_MESSAGE, type TreeScanInput } from './treeScanPolicy.js';
 
 function readStdin(): TreeScanInput {
@@ -12,6 +13,7 @@ function readStdin(): TreeScanInput {
 
 const input = readStdin();
 if (shouldDenyTreeScan(input)) {
+  recordDeniedScan(input);
   process.stdout.write(
     JSON.stringify({
       permission: 'deny',

@@ -49,6 +49,17 @@ Indexes live under `~/.local-code-intelligence` (or `CODE_INTEL_DB_PATH`), not i
 
 `tests/integration/mcp.test.ts` spawns `code-intel mcp` over stdio with `@modelcontextprotocol/client` — the same transport Cursor uses. When you add or rename a tool, update that file's expected tool list.
 
+## Publishing (maintainers)
+
+```bash
+npm login
+npm publish --access public
+```
+
+The package name is `@pranitmodi/code-intel` (scoped; unscoped `code-intel` is blocked by npm as too similar to `codeintel`).
+
+`prepublishOnly` builds `dist/` and runs unit tests. The tarball includes `dist/` plus README and LICENSE; indexes under `~/.local-code-intelligence` are never published.
+
 ## Pull requests
 
 - Keep changes focused; match the existing module boundaries (`src/discovery`, `src/chunker`, `src/embeddings`, `src/vector-store`, `src/indexer`, `src/search`, `src/mcp`).

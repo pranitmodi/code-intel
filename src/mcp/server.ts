@@ -8,6 +8,8 @@ import { getFileContext } from '../search/getFileContext.js';
 import { getRepoContext } from '../search/getRepoContext.js';
 import { MCP_SERVER_INSTRUCTIONS } from '../cursor/mcpInstructions.js';
 import { createMcpRuntime, type McpRuntime, type ResolveOk } from './runtime.js';
+import { startWorkspaceWatchers } from './watchOnStart.js';
+import { recordMcpRetrieval } from '../usage/record.js';
 
 function textResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
@@ -21,11 +23,22 @@ const repoField = z
 async function withRepo(
   runtime: McpRuntime,
   repo: string | undefined,
-  fn: (resolved: ResolveOk['context']) => Promise<unknown>
+  fn: (resolved: ResolveOk['context']) => Promise<unknown>,
+  usageTool?: string
 ) {
+  const started = Date.now();
   const resolved = await runtime.resolve(repo);
   if (!resolved.ok) return textResult(resolved);
-  return textResult(await fn(resolved.context));
+  const value = await fn(resolved.context);
+  if (usageTool) {
+    recordMcpRetrieval({
+      tool: usageTool,
+      repo: resolved.context.repoRoot,
+      payloadText: JSON.stringify(value),
+      latencyMs: Date.now() - started
+    });
+  }
+  return textResult(value);
 }
 
 /** Exposes the local index to any MCP client (Cursor, VS Code, Claude Code, Codex, ...) — read-only (spec section 20/22). */
@@ -69,16 +82,21 @@ export function buildServer(runtime: McpRuntime): McpServer {
       })
     },
     async ({ query, limit, min_score, max_tokens, repo }) =>
-      withRepo(runtime, repo, async (context) => {
-        const results = await searchCodebase(
-          query,
-          context.vectorStore,
-          context.embeddingProvider,
-          context.config.search,
-          { limit, minScore: min_score, maxTokens: max_tokens }
-        );
-        return { repo: context.repoRoot, results };
-      })
+      withRepo(
+        runtime,
+        repo,
+        async (context) => {
+          const results = await searchCodebase(
+            query,
+            context.vectorStore,
+            context.embeddingProvider,
+            context.config.search,
+            { limit, minScore: min_score, maxTokens: max_tokens }
+          );
+          return { repo: context.repoRoot, results };
+        },
+        'search_codebase'
+      )
   );
 
   server.registerTool(
@@ -93,10 +111,15 @@ export function buildServer(runtime: McpRuntime): McpServer {
       })
     },
     async ({ name, limit, repo }) =>
-      withRepo(runtime, repo, async (context) => ({
-        repo: context.repoRoot,
-        matches: await searchSymbol(name, context.vectorStore, limit)
-      }))
+      withRepo(
+        runtime,
+        repo,
+        async (context) => ({
+          repo: context.repoRoot,
+          matches: await searchSymbol(name, context.vectorStore, limit)
+        }),
+        'search_symbol'
+      )
   );
 
   server.registerTool(
@@ -112,10 +135,15 @@ export function buildServer(runtime: McpRuntime): McpServer {
       })
     },
     async ({ file, start_line, end_line, repo }) =>
-      withRepo(runtime, repo, async (context) => ({
-        repo: context.repoRoot,
-        ...(await getFileContext(context.repoRoot, file, start_line, end_line))
-      }))
+      withRepo(
+        runtime,
+        repo,
+        async (context) => ({
+          repo: context.repoRoot,
+          ...(await getFileContext(context.repoRoot, file, start_line, end_line))
+        }),
+        'get_file_context'
+      )
   );
 
   server.registerTool(
@@ -144,19 +172,47 @@ export function buildServer(runtime: McpRuntime): McpServer {
       })
     },
     async ({ symbol, limit, repo }) =>
-      withRepo(runtime, repo, async (context) => ({
-        repo: context.repoRoot,
-        references: await findReferences(symbol, context.vectorStore, limit)
-      }))
+      withRepo(
+        runtime,
+        repo,
+        async (context) => ({
+          repo: context.repoRoot,
+          references: await findReferences(symbol, context.vectorStore, limit)
+        }),
+        'find_references'
+      )
   );
 
   return server;
 }
 
-export async function startMcpServer(repoRoot?: string): Promise<void> {
+export async function startMcpServer(
+  repoRoot?: string,
+  options: { watch?: boolean } = {}
+): Promise<void> {
   const runtime = await createMcpRuntime(repoRoot);
   const server = buildServer(runtime);
+  const watchEnabled = options.watch !== false && runtime.config.indexing.watch;
   const label = runtime.defaultRepoRoot ?? '(no default repo — pass repo on each tool call)';
-  console.error(`local-code-intelligence MCP server running on stdio (repo: ${label})`);
+  console.error(
+    `local-code-intelligence MCP server running on stdio (repo: ${label}${watchEnabled ? ', watch on' : ''})`
+  );
+
+  if (watchEnabled) {
+    void startWorkspaceWatchers(runtime)
+      .then((stop) => {
+        const shutdown = (): void => {
+          void stop();
+        };
+        process.once('SIGINT', shutdown);
+        process.once('SIGTERM', shutdown);
+      })
+      .catch((error) => {
+        console.error(
+          `[WATCH] failed to start: ${error instanceof Error ? error.message : String(error)}`
+        );
+      });
+  }
+
   serveStdio(() => server);
 }

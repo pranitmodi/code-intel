@@ -45,7 +45,7 @@ async function connectMcp(repoRoot: string, dbHome: string): Promise<Client> {
   const client = new Client({ name: 'test-harness', version: '1.0.0' });
   const transport = new StdioClientTransport({
     command: resolve(PROJECT_ROOT, 'node_modules/.bin/tsx'),
-    args: [resolve(PROJECT_ROOT, 'src/cli/index.ts'), 'mcp', '--repo', repoRoot],
+    args: [resolve(PROJECT_ROOT, 'src/cli/index.ts'), 'mcp', '--no-watch', '--repo', repoRoot],
     env: { ...(process.env as Record<string, string>), CODE_INTEL_DB_PATH: dbHome }
   });
   await client.connect(transport);
