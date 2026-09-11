@@ -5,7 +5,11 @@ export const DEFAULT_CONFIG: CodeIntelConfig = {
     provider: 'ollama',
     model: 'nomic-embed-text',
     host: 'http://127.0.0.1:11434',
-    batchSize: 32
+    baseUrl: '',
+    embeddingsPath: '/embeddings',
+    batchSize: 32,
+    timeoutMs: 60_000,
+    useSystemCa: false
   },
   database: {
     path: '~/.local-code-intelligence'

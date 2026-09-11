@@ -47,4 +47,36 @@ describe('cursor-install', () => {
     const skill = await readFile(result.skillPath, 'utf-8');
     expect(skill).toContain('user-local-code-intelligence');
   });
+
+  it('adds system CA settings without dropping existing server environment', () => {
+    const existing = JSON.stringify({
+      mcpServers: {
+        'local-code-intelligence': {
+          command: 'old-command',
+          env: {
+            COMPANY_PROXY: 'enabled',
+            NODE_OPTIONS: '--enable-source-maps'
+          }
+        }
+      }
+    });
+    const merged = JSON.parse(
+      mergeCursorMcpConfig(existing, '/abs/cli.js', {
+        NODE_USE_SYSTEM_CA: '1',
+        NODE_OPTIONS: '--use-system-ca'
+      })
+    ) as {
+      mcpServers: {
+        'local-code-intelligence': {
+          command: string;
+          env: Record<string, string>;
+        };
+      };
+    };
+    const server = merged.mcpServers['local-code-intelligence'];
+    expect(server.command).toBe('node');
+    expect(server.env.COMPANY_PROXY).toBe('enabled');
+    expect(server.env.NODE_USE_SYSTEM_CA).toBe('1');
+    expect(server.env.NODE_OPTIONS).toBe('--enable-source-maps --use-system-ca');
+  });
 });

@@ -10,12 +10,13 @@ import { chunkFile } from '../chunker/chunker.js';
 import { computeChunkId, hashChunkContent, hashFileContent } from '../hashing/hash.js';
 import { normalizeVector } from '../embeddings/vectorMath.js';
 import type { EmbeddingProvider } from '../embeddings/EmbeddingProvider.js';
+import { isEmbeddingInputTooLargeError } from '../embeddings/OpenAICompatibleEmbeddingProvider.js';
 import type { LanceVectorStore } from '../vector-store/LanceVectorStore.js';
 import type { ChunkRecord } from '../vector-store/schema.js';
 import { createLogger } from '../utils/logger.js';
 import { acquireLock } from './lock.js';
 import { registryEntryFrom, upsertRegistryEntry } from './registry.js';
-import { writeState } from './state.js';
+import { removeProgress, writeProgress, writeState, type IndexProgress } from './state.js';
 
 const logger = createLogger('indexer');
 /** Safety cap so one abnormally large file (e.g. a generated bundle that slipped past ignore rules) can't stall a run. */
@@ -86,9 +87,33 @@ export class Indexer {
       chunksDeleted: 0,
       durationMs: 0
     };
+    const progress: IndexProgress = {
+      startedAt: new Date(started).toISOString(),
+      updatedAt: new Date().toISOString(),
+      filesDiscovered: discovered.length,
+      filesProcessed: 0,
+      filesIndexed: 0,
+      filesSkipped: 0,
+      chunksEmbedded: 0,
+      embeddingModel: this.deps.embeddingProvider.modelName()
+    };
+    writeProgress(this.deps.paths.progressFile, progress);
 
     for (const file of discovered) {
-      await this.processDiscoveredFile(file, previousHashes, removedHashToPath, handledRemoved, summary);
+      try {
+        await this.processDiscoveredFile(file, previousHashes, removedHashToPath, handledRemoved, summary);
+      } catch (error) {
+        if (!isEmbeddingInputTooLargeError(error)) throw error;
+        summary.filesSkipped++;
+        logger.warn(`[SKIP] ${file.relativePath} exceeds the embedding model context window after chunking`);
+      } finally {
+        progress.updatedAt = new Date().toISOString();
+        progress.filesProcessed++;
+        progress.filesIndexed = summary.filesIndexed + summary.filesUnchanged + summary.filesRenamed;
+        progress.filesSkipped = summary.filesSkipped;
+        progress.chunksEmbedded = summary.chunksEmbedded;
+        writeProgress(this.deps.paths.progressFile, progress);
+      }
     }
 
     for (const oldPath of removedPaths) {
@@ -128,6 +153,7 @@ export class Indexer {
         embeddingModel
       })
     );
+    removeProgress(this.deps.paths.progressFile);
 
     logger.info('[DONE]', { ...summary });
     return summary;

@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import ignoreFactory from 'ignore';
 import { DEFAULT_IGNORE_PATTERNS, SECRET_FILE_PATTERNS } from './default-ignore.js';
+import { isGitRoot } from './gitRoots.js';
 
 export interface DiscoveredFile {
   absolutePath: string;
@@ -56,6 +57,9 @@ export async function discoverFiles(repoRoot: string, options: DiscoveryOptions)
 
       if (entry.isDirectory()) {
         if (ig.ignores(`${relativePath}/`)) continue;
+        // A nested Git repository owns its own vector collection. Indexing it
+        // here as well would duplicate data and blur repository boundaries.
+        if (isGitRoot(absolutePath)) continue;
         await walk(absolutePath);
         continue;
       }

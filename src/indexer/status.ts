@@ -6,7 +6,7 @@ import { discoverFiles } from '../discovery/discover.js';
 import { getDirectorySizeBytes } from '../utils/dirSize.js';
 import { computeRepoId } from '../utils/repo-id.js';
 import { indexedChildrenOf, listIndexedRepos, type RegistryEntry } from './registry.js';
-import { readState } from './state.js';
+import { readProgress, readState, type IndexProgress } from './state.js';
 
 export const INDEX_HINT = 'Not indexed yet — run `code-intel setup --repo <path>` (or `code-intel index --repo <path>`).';
 
@@ -23,6 +23,7 @@ export interface IndexStatus {
   embeddingModel: string | null;
   indexLocation: string | null;
   databaseBytes: number | null;
+  progress?: IndexProgress & { active: boolean };
   message?: string;
   indexedChildren?: RegistryEntry[];
 }
@@ -52,6 +53,10 @@ export async function getIndexStatus(repoRoot: string): Promise<IndexStatus> {
 
   const paths = resolveRepoPaths(config, repoRoot, repoId);
   const state = readState(paths.stateFile);
+  const savedProgress = readProgress(paths.progressFile);
+  const progress = savedProgress
+    ? { ...savedProgress, active: existsSync(paths.lockFile) }
+    : undefined;
   const children = indexedChildrenOf(config.database.path, repoRoot).filter((child) => child.path !== repoRoot);
 
   if (!state) {
@@ -68,9 +73,14 @@ export async function getIndexStatus(repoRoot: string): Promise<IndexStatus> {
       embeddingModel: null,
       indexLocation: paths.indexDir,
       databaseBytes: existsSync(paths.dbDir) ? getDirectorySizeBytes(paths.dbDir) : null,
-      message: children.length > 0
-        ? `This folder is not indexed, but ${children.length} indexed child repo(s) were found. Pass repo as a child's path, id, or name.`
-        : INDEX_HINT,
+      progress,
+      message: progress?.active
+        ? 'Initial indexing is in progress.'
+        : progress
+          ? 'A partial index is available — run `code-intel index --repo <path>` to resume.'
+          : children.length > 0
+            ? `This folder is not indexed, but ${children.length} indexed child repo(s) were found. Pass repo as a child's path, id, or name.`
+            : INDEX_HINT,
       indexedChildren: children.length > 0 ? children : undefined
     };
   }
@@ -98,19 +108,22 @@ export async function getIndexStatus(repoRoot: string): Promise<IndexStatus> {
     lastIndexedAt: state.lastIndexedAt,
     embeddingModel: state.embeddingModel,
     indexLocation: paths.indexDir,
-    databaseBytes: getDirectorySizeBytes(paths.dbDir)
+    databaseBytes: getDirectorySizeBytes(paths.dbDir),
+    progress
   };
 }
 
-export async function listIndexedReposWithStale(databasePath: string): Promise<Array<RegistryEntry & { stale: boolean | null }>> {
+export async function listIndexedReposWithStale(
+  databasePath: string
+): Promise<Array<RegistryEntry & { stale: boolean | null; progress?: IndexStatus['progress'] }>> {
   const repos = listIndexedRepos(databasePath);
   return Promise.all(
     repos.map(async (repo) => {
-      if (!repo.path || !existsSync(repo.path) || !repo.lastIndexedAt) {
+      if (!repo.path || !existsSync(repo.path)) {
         return { ...repo, stale: null };
       }
       const status = await getIndexStatus(repo.path);
-      return { ...repo, stale: status.stale };
+      return { ...repo, stale: status.stale, progress: status.progress };
     })
   );
 }

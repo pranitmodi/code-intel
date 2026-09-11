@@ -61,4 +61,23 @@ describe('chunkFile', () => {
     expect(chunks).toHaveLength(1);
     expect(chunks[0]?.content).toContain('PI');
   });
+
+  it('hard-splits an oversized single-line asset before embedding', async () => {
+    const maxChars = config.maxChunkTokens * 4;
+    const oneLineSvg = `<svg><path d="${'x'.repeat(maxChars * 3)}"/></svg>`;
+    const { chunks } = await chunkFile(oneLineSvg, 'generated/banner.svg', config);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.content.length <= maxChars)).toBe(true);
+    expect(chunks.every((chunk) => chunk.startLine === 1 && chunk.endLine === 1)).toBe(true);
+  });
+
+  it('hard-splits oversized structural symbols to the same budget', async () => {
+    const maxChars = config.maxChunkTokens * 4;
+    const source = `export function generated() {\n  return "${'x'.repeat(maxChars * 2)}";\n}\n`;
+    const { chunks } = await chunkFile(source, 'src/generated.ts', config);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.content.length <= maxChars)).toBe(true);
+  });
 });

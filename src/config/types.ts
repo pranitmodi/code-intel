@@ -1,8 +1,22 @@
+export type EmbeddingProviderName = 'ollama' | 'openai-compatible';
+
 export interface EmbeddingConfig {
-  provider: 'ollama';
+  provider: EmbeddingProviderName;
   model: string;
+  /** Ollama host, used when provider is `ollama`. */
   host: string;
+  /** OpenAI-compatible API origin or full embeddings URL. */
+  baseUrl: string;
+  /** Path appended to `baseUrl` unless `baseUrl` already ends with `/embeddings`. */
+  embeddingsPath: string;
   batchSize: number;
+  timeoutMs: number;
+  /** Use trusted certificates from the operating system store for corporate TLS. */
+  useSystemCa: boolean;
+  /** Loaded from the environment only; never read from YAML. */
+  apiKey?: string;
+  /** Optional identity field some proxies require; environment only. */
+  user?: string;
 }
 
 export interface DatabaseConfig {
@@ -45,7 +59,11 @@ export interface RawConfigFile {
     provider: string;
     model: string;
     host: string;
+    base_url: string;
+    embeddings_path: string;
     batch_size: number;
+    timeout_ms: number;
+    use_system_ca: boolean;
   }>;
   database?: Partial<{
     path: string;

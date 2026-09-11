@@ -7,6 +7,7 @@ export interface RepoPaths {
   dbDir: string;
   metadataDir: string;
   stateFile: string;
+  progressFile: string;
   logsDir: string;
   lockFile: string;
 }
@@ -19,6 +20,7 @@ export function resolveRepoPaths(config: CodeIntelConfig, repoRoot: string, repo
     dbDir: join(indexDir, 'db'),
     metadataDir: join(indexDir, 'metadata'),
     stateFile: join(indexDir, 'state.json'),
+    progressFile: join(indexDir, 'progress.json'),
     logsDir: join(indexDir, 'logs'),
     lockFile: join(indexDir, '.lock')
   };

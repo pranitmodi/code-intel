@@ -14,6 +14,25 @@ export function textChunk(content: string, config: IndexingConfig): CodeChunk[] 
 
   let start = 0;
   while (start < lines.length) {
+    const firstLine = lines[start] ?? '';
+    // A minified/generated file can contain one enormous line. The normal
+    // line-window loop intentionally accepts its first line, which used to
+    // bypass maxChars and could exceed an embedding model's context window.
+    if (firstLine.length > maxChars) {
+      for (let offset = 0; offset < firstLine.length; offset += maxChars) {
+        chunks.push({
+          symbolName: null,
+          symbolType: null,
+          parentSymbol: null,
+          startLine: start + 1,
+          endLine: start + 1,
+          content: firstLine.slice(offset, offset + maxChars)
+        });
+      }
+      start++;
+      continue;
+    }
+
     let end = start;
     let charCount = 0;
     while (end < lines.length) {

@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { basename } from 'node:path';
-import { loadConfig } from '../config/load.js';
+import { loadConfig, type LoadConfigOptions } from '../config/load.js';
 import { isIndexInsideRepo, resolveRepoPaths, type RepoPaths } from '../config/paths.js';
 import type { CodeIntelConfig } from '../config/types.js';
 import { computeRepoId } from '../utils/repo-id.js';
@@ -14,8 +14,8 @@ export interface ScaffoldResult {
 }
 
 /** Create the on-disk index directories and register the repo (does not embed anything). */
-export function scaffoldRepo(repoRoot: string): ScaffoldResult {
-  const config = loadConfig({ repoRoot });
+export function scaffoldRepo(repoRoot: string, loadOptions: Omit<LoadConfigOptions, 'repoRoot'> = {}): ScaffoldResult {
+  const config = loadConfig({ ...loadOptions, repoRoot });
   const repoId = computeRepoId(repoRoot);
   const paths = resolveRepoPaths(config, repoRoot, repoId);
 

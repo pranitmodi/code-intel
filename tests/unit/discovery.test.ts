@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { discoverFiles } from '../../src/discovery/discover.js';
+import { resolveIndexRoots } from '../../src/discovery/gitRoots.js';
 
 describe('discoverFiles', () => {
   let repoRoot: string;
@@ -63,5 +64,33 @@ describe('discoverFiles', () => {
 
     const files = await discoverFiles(repoRoot, { allowSensitiveFiles: false, extraIgnorePatterns: ['scripts/'] });
     expect(files.map((f) => f.relativePath)).toEqual(['src/index.ts']);
+  });
+
+  it('excludes generated assets, model files, and logs by default', async () => {
+    await write('src/index.ts', 'export const a = 1;');
+    await write('assets/banner.svg', '<svg/>');
+    await write('models/embed.onnx', 'generated model');
+    await write('logs/server.log', 'generated log');
+
+    const files = await discoverFiles(repoRoot, { allowSensitiveFiles: false, extraIgnorePatterns: [] });
+    expect(files.map((f) => f.relativePath)).toEqual(['src/index.ts']);
+  });
+
+  it('treats nested Git repositories as separate index boundaries', async () => {
+    await write('notes.md', 'workspace notes');
+    await write('repo-a/.git/HEAD', 'ref: refs/heads/main');
+    await write('repo-a/src/a.ts', 'export const a = 1;');
+    await write('group/repo-b/.git/HEAD', 'ref: refs/heads/main');
+    await write('group/repo-b/src/b.ts', 'export const b = 2;');
+
+    const files = await discoverFiles(repoRoot, { allowSensitiveFiles: false, extraIgnorePatterns: [] });
+    expect(files.map((file) => file.relativePath)).toEqual(['notes.md']);
+    await expect(resolveIndexRoots(repoRoot)).resolves.toEqual([
+      join(repoRoot, 'group/repo-b'),
+      join(repoRoot, 'repo-a')
+    ]);
+    await expect(resolveIndexRoots(join(repoRoot, 'repo-a/src'))).resolves.toEqual([
+      join(repoRoot, 'repo-a')
+    ]);
   });
 });

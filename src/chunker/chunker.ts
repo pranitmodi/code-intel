@@ -5,8 +5,6 @@ import { textChunk } from './textChunker.js';
 import type { CodeChunk } from './types.js';
 
 const CHARS_PER_TOKEN = 4;
-/** How far over budget a single structural chunk must be before it's still worth force-splitting. */
-const OVERSIZED_MULTIPLIER = 3;
 
 export interface ChunkFileResult {
   language: string;
@@ -25,10 +23,10 @@ export async function chunkFile(content: string, filePath: string, config: Index
   return { language, chunks: textChunk(content, config) };
 }
 
-/** Last-resort split for a symbol with no nested structure that's still far over the chunk budget. */
+/** Enforce the embedding-input budget even when one structural symbol is unusually large. */
 function splitIfOversized(chunk: CodeChunk, config: IndexingConfig): CodeChunk[] {
   const maxChars = config.maxChunkTokens * CHARS_PER_TOKEN;
-  if (chunk.content.length <= maxChars * OVERSIZED_MULTIPLIER) return [chunk];
+  if (chunk.content.length <= maxChars) return [chunk];
 
   return textChunk(chunk.content, config).map((piece) => ({
     ...piece,

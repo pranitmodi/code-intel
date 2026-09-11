@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { loadConfig } from '../config/load.js';
 import type { CodeIntelConfig } from '../config/types.js';
 import type { AppContext } from '../context.js';
-import { OllamaEmbeddingProvider } from '../embeddings/OllamaEmbeddingProvider.js';
+import { createEmbeddingProvider } from '../embeddings/createEmbeddingProvider.js';
 import { LanceVectorStore } from '../vector-store/LanceVectorStore.js';
 import { computeRepoId } from '../utils/repo-id.js';
 import { resolveRepoPaths } from '../config/paths.js';
@@ -51,11 +51,13 @@ export async function createMcpRuntime(defaultRepoRoot?: string): Promise<McpRun
     if (!state?.embeddingDimensions) {
       throw new Error('not indexed');
     }
+    if (state.embeddingModel !== repoConfig.embedding.model) {
+      throw new Error(
+        `This index was built with embedding model "${state.embeddingModel}", but "${repoConfig.embedding.model}" is configured. Run \`code-intel rebuild --repo ${repoRoot}\`.`
+      );
+    }
 
-    const embeddingProvider = new OllamaEmbeddingProvider({
-      host: repoConfig.embedding.host,
-      model: repoConfig.embedding.model,
-      batchSize: repoConfig.embedding.batchSize,
+    const embeddingProvider = createEmbeddingProvider(repoConfig.embedding, {
       dimensions: state.embeddingDimensions
     });
     const vectorStore = await LanceVectorStore.open(paths.dbDir, state.embeddingDimensions);
@@ -89,6 +91,13 @@ export async function createMcpRuntime(defaultRepoRoot?: string): Promise<McpRun
     };
   }
 
+  function resolveFailure(repoRoot: string, error: unknown): ResolveErr {
+    if (error instanceof Error && error.message !== 'not indexed') {
+      return notIndexed(repoRoot, { message: error.message });
+    }
+    return notIndexed(repoRoot);
+  }
+
   return {
     defaultRepoRoot: resolvedDefault,
     config,
@@ -108,8 +117,8 @@ export async function createMcpRuntime(defaultRepoRoot?: string): Promise<McpRun
         try {
           const context = await cachedOpen(repoRoot);
           return { ok: true, context };
-        } catch {
-          return notIndexed(repoRoot);
+        } catch (error) {
+          return resolveFailure(repoRoot, error);
         }
       }
 
@@ -129,8 +138,8 @@ export async function createMcpRuntime(defaultRepoRoot?: string): Promise<McpRun
       try {
         const context = await cachedOpen(resolvedDefault);
         return { ok: true, context };
-      } catch {
-        return notIndexed(resolvedDefault);
+      } catch (error) {
+        return resolveFailure(resolvedDefault, error);
       }
     },
     listRepos() {
