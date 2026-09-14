@@ -14,7 +14,8 @@ const ENV_KEYS = [
   'CODE_INTEL_EMBEDDING_BASE_URL',
   'CODE_INTEL_EMBEDDING_API_KEY',
   'CODE_INTEL_EMBEDDING_USER',
-  'CODE_INTEL_DB_PATH'
+  'CODE_INTEL_DB_PATH',
+  'CODE_INTEL_INDEX_CONCURRENCY'
 ] as const;
 const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
@@ -117,5 +118,16 @@ describe('embedding configuration', () => {
     expect(createEmbeddingProvider(loadConfig({ repoRoot }).embedding)).toBeInstanceOf(
       OllamaEmbeddingProvider
     );
+  });
+
+  it('loads indexing concurrency from YAML and CODE_INTEL_INDEX_CONCURRENCY', async () => {
+    repoRoot = await mkdtemp(join(tmpdir(), 'code-intel-config-'));
+    await mkdir(join(repoRoot, '.code-intel'));
+    await writeFile(join(repoRoot, '.code-intel', 'config.yaml'), ['indexing:', '  concurrency: 8'].join('\n'));
+
+    expect(loadConfig({ repoRoot }).indexing.concurrency).toBe(8);
+
+    process.env.CODE_INTEL_INDEX_CONCURRENCY = '2';
+    expect(loadConfig({ repoRoot }).indexing.concurrency).toBe(2);
   });
 });

@@ -68,7 +68,8 @@ function applyRawConfig(base: CodeIntelConfig, raw: RawConfigFile | undefined): 
       maxChunkTokens: raw.indexing?.max_chunk_tokens ?? base.indexing.maxChunkTokens,
       chunkOverlap: raw.indexing?.chunk_overlap ?? base.indexing.chunkOverlap,
       debounceMs: raw.indexing?.debounce_ms ?? base.indexing.debounceMs,
-      watch: raw.indexing?.watch ?? base.indexing.watch
+      watch: raw.indexing?.watch ?? base.indexing.watch,
+      concurrency: raw.indexing?.concurrency ?? base.indexing.concurrency
     },
     search: {
       defaultLimit: raw.search?.default_limit ?? base.search.defaultLimit,
@@ -120,7 +121,10 @@ function applyEnvOverrides(config: CodeIntelConfig): CodeIntelConfig {
     },
     indexing: {
       ...config.indexing,
-      ...(watch !== undefined ? { watch } : {})
+      ...(watch !== undefined ? { watch } : {}),
+      ...(env.CODE_INTEL_INDEX_CONCURRENCY
+        ? { concurrency: parsePositiveInt(env.CODE_INTEL_INDEX_CONCURRENCY, config.indexing.concurrency) }
+        : {})
     }
   };
 }

@@ -104,6 +104,12 @@ describe('LanceVectorStore', () => {
     expect(results[0]?.id).toBe('close');
   });
 
+  it('optimizes a small table without requiring an ANN index', async () => {
+    await store.upsertChunks([makeChunk({})]);
+    await expect(store.optimize()).resolves.toBeUndefined();
+    expect(await store.countRows()).toBe(1);
+  });
+
   it('finds a chunk by keyword via full-text search', async () => {
     await store.upsertChunks([
       makeChunk({ id: 'auth-chunk', content: 'refreshToken renews the session', file_path: 'a.ts' }),

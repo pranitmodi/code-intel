@@ -1,6 +1,6 @@
 {
   "name": "@pranitmodi/code-intel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local-first semantic code indexing and retrieval server, exposed to AI agents via MCP.",
   "type": "module",
   "license": "MIT",

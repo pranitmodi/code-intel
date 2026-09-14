@@ -30,6 +30,8 @@ export interface IndexingConfig {
   debounceMs: number;
   /** When true, `code-intel mcp` starts incremental file watchers for indexed repos under the workspace. */
   watch: boolean;
+  /** Max files to parse/embed at once. LanceDB writes stay serialized. */
+  concurrency: number;
 }
 
 export interface SearchConfig {
@@ -73,6 +75,7 @@ export interface RawConfigFile {
     chunk_overlap: number;
     debounce_ms: number;
     watch: boolean;
+    concurrency: number;
   }>;
   search?: Partial<{
     default_limit: number;

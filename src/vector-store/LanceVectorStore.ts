@@ -55,6 +55,7 @@ export class LanceVectorStore {
     await this.tryCreateIndex('content FTS index', () =>
       this.table.createIndex('content', { config: lancedb.Index.fts() })
     );
+    await this.ensureVectorAnnIndex();
   }
 
   private async tryCreateIndex(label: string, run: () => Promise<void>): Promise<void> {
@@ -157,9 +158,21 @@ export class LanceVectorStore {
     return this.table.countRows();
   }
 
-  /** Folds new rows into the vector/FTS indexes — call after a full indexing run to keep search latency low. */
+  /** Compact Lance files, then add IVF-PQ once the table is large enough. */
   async optimize(): Promise<void> {
     await this.table.optimize();
+    await this.ensureVectorAnnIndex();
+  }
+
+  /** IVF-PQ ANN once there are enough rows; small indexes keep brute-force kNN. */
+  private async ensureVectorAnnIndex(): Promise<void> {
+    const rows = await this.table.countRows();
+    if (rows < 256) return;
+    await this.tryCreateIndex('embedding IVF-PQ index', () =>
+      this.table.createIndex('embedding', {
+        config: lancedb.Index.ivfPq({ distanceType: 'l2' })
+      })
+    );
   }
 }
 

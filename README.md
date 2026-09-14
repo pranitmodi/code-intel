@@ -241,7 +241,7 @@ Default: `~/.local-code-intelligence/repos/<repo-id>/{db,metadata,state.json,log
 
 ## Configuration
 
-`.code-intel/config.yaml` (repo-level) or `~/.local-code-intelligence/config.yaml` (global), merged over built-in defaults, then overridden by environment variables, then CLI flags. Environment variables: `CODE_INTEL_EMBEDDING_PROVIDER`, `CODE_INTEL_EMBEDDING_MODEL`, `CODE_INTEL_EMBEDDING_HOST`, `CODE_INTEL_EMBEDDING_BASE_URL`, `CODE_INTEL_EMBEDDING_PATH`, `CODE_INTEL_EMBEDDING_BATCH_SIZE`, `CODE_INTEL_EMBEDDING_TIMEOUT_MS`, `CODE_INTEL_USE_SYSTEM_CA`, `CODE_INTEL_EMBEDDING_API_KEY`, `CODE_INTEL_EMBEDDING_USER`, `CODE_INTEL_DB_PATH`, `CODE_INTEL_WATCH`.
+`.code-intel/config.yaml` (repo-level) or `~/.local-code-intelligence/config.yaml` (global), merged over built-in defaults, then overridden by environment variables, then CLI flags. Environment variables: `CODE_INTEL_EMBEDDING_PROVIDER`, `CODE_INTEL_EMBEDDING_MODEL`, `CODE_INTEL_EMBEDDING_HOST`, `CODE_INTEL_EMBEDDING_BASE_URL`, `CODE_INTEL_EMBEDDING_PATH`, `CODE_INTEL_EMBEDDING_BATCH_SIZE`, `CODE_INTEL_EMBEDDING_TIMEOUT_MS`, `CODE_INTEL_USE_SYSTEM_CA`, `CODE_INTEL_EMBEDDING_API_KEY`, `CODE_INTEL_EMBEDDING_USER`, `CODE_INTEL_DB_PATH`, `CODE_INTEL_WATCH`, `CODE_INTEL_INDEX_CONCURRENCY`.
 
 ```yaml
 embedding:
@@ -260,6 +260,7 @@ indexing:
   chunk_overlap: 100
   debounce_ms: 1000
   watch: true
+  concurrency: 4
 search:
   default_limit: 10
   vector_weight: 0.7
@@ -281,7 +282,8 @@ ignore: []
 ## Performance considerations
 
 - Structural chunking with per-chunk content hashing means only edited chunks are re-embedded, not the whole file.
-- No automatic vector ANN index is built by default — brute-force kNN is fine up to a few hundred thousand chunks; add one later if a repository grows beyond that.
+- Files are parsed and embedded in a bounded pool (`indexing.concurrency`, default 4). LanceDB writes stay serialized.
+- Tables with 256+ chunks get an IVF-PQ ANN index (L2); smaller indexes keep brute-force kNN.
 - A single-writer PID lock file prevents two `index`/`watch` processes from corrupting the same repo's index concurrently. The `mcp` command reads the index and, by default, incrementally writes when watched files change.
 
 ## Development

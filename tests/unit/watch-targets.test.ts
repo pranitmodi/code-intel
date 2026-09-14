@@ -26,4 +26,8 @@ describe('DEFAULT_CONFIG', () => {
   it('enables incremental watch by default', () => {
     expect(DEFAULT_CONFIG.indexing.watch).toBe(true);
   });
+
+  it('indexes up to four files at once by default', () => {
+    expect(DEFAULT_CONFIG.indexing.concurrency).toBe(4);
+  });
 });

@@ -14,6 +14,7 @@ import { isEmbeddingInputTooLargeError } from '../embeddings/OpenAICompatibleEmb
 import type { LanceVectorStore } from '../vector-store/LanceVectorStore.js';
 import type { ChunkRecord } from '../vector-store/schema.js';
 import { createLogger } from '../utils/logger.js';
+import { mapPool, Mutex } from '../utils/pool.js';
 import { acquireLock } from './lock.js';
 import { registryEntryFrom, upsertRegistryEntry } from './registry.js';
 import { removeProgress, writeProgress, writeState, type IndexProgress } from './state.js';
@@ -46,6 +47,8 @@ export interface IndexSummary {
 
 /** Discover -> hash-diff -> parse/chunk -> embed only what changed -> upsert (spec sections 11 & 14). */
 export class Indexer {
+  private readonly storeLock = new Mutex();
+
   constructor(private readonly deps: IndexerDeps) {}
 
   async runFullIndex(): Promise<IndexSummary> {
@@ -99,22 +102,26 @@ export class Indexer {
     };
     writeProgress(this.deps.paths.progressFile, progress);
 
-    for (const file of discovered) {
+    await mapPool(discovered, this.deps.config.indexing.concurrency, async (file) => {
       try {
         await this.processDiscoveredFile(file, previousHashes, removedHashToPath, handledRemoved, summary);
       } catch (error) {
         if (!isEmbeddingInputTooLargeError(error)) throw error;
-        summary.filesSkipped++;
+        await this.storeLock.run(() => {
+          summary.filesSkipped++;
+        });
         logger.warn(`[SKIP] ${file.relativePath} exceeds the embedding model context window after chunking`);
       } finally {
-        progress.updatedAt = new Date().toISOString();
-        progress.filesProcessed++;
-        progress.filesIndexed = summary.filesIndexed + summary.filesUnchanged + summary.filesRenamed;
-        progress.filesSkipped = summary.filesSkipped;
-        progress.chunksEmbedded = summary.chunksEmbedded;
-        writeProgress(this.deps.paths.progressFile, progress);
+        await this.storeLock.run(() => {
+          progress.updatedAt = new Date().toISOString();
+          progress.filesProcessed++;
+          progress.filesIndexed = summary.filesIndexed + summary.filesUnchanged + summary.filesRenamed;
+          progress.filesSkipped = summary.filesSkipped;
+          progress.chunksEmbedded = summary.chunksEmbedded;
+          writeProgress(this.deps.paths.progressFile, progress);
+        });
       }
-    }
+    });
 
     for (const oldPath of removedPaths) {
       if (handledRemoved.has(oldPath)) continue;
@@ -174,7 +181,9 @@ export class Indexer {
     }
     if (sizeBytes > MAX_FILE_BYTES) {
       logger.warn(`[SKIP] ${file.relativePath} exceeds ${MAX_FILE_BYTES}-byte safety cap`);
-      summary.filesSkipped++;
+      await this.storeLock.run(() => {
+        summary.filesSkipped++;
+      });
       return;
     }
 
@@ -185,43 +194,54 @@ export class Indexer {
       logger.warn(`[SKIP] ${file.relativePath} could not be read`, {
         error: error instanceof Error ? error.message : String(error)
       });
-      summary.filesSkipped++;
+      await this.storeLock.run(() => {
+        summary.filesSkipped++;
+      });
       return;
     }
 
     if (looksBinary(buffer)) {
-      summary.filesSkipped++;
+      await this.storeLock.run(() => {
+        summary.filesSkipped++;
+      });
       return;
     }
 
     const content = buffer.toString('utf-8');
     if (containsLikelySecret(content)) {
       logger.warn(`[SKIP] ${file.relativePath} looks like it contains a secret value`);
-      summary.filesSkipped++;
+      await this.storeLock.run(() => {
+        summary.filesSkipped++;
+      });
       return;
     }
 
     const fileHash = hashFileContent(buffer);
-    const previousHash = previousHashes.get(file.relativePath);
+    const decision = await this.storeLock.run(async (): Promise<'unchanged' | 'rename' | 'index'> => {
+      const previousHash = previousHashes.get(file.relativePath);
 
-    if (previousHash !== undefined) {
-      if (previousHash === fileHash) {
-        summary.filesUnchanged++;
-        return;
+      if (previousHash !== undefined) {
+        if (previousHash === fileHash) {
+          summary.filesUnchanged++;
+          return 'unchanged';
+        }
+        return 'index';
       }
-      await this.indexFileContent(file, content, fileHash, summary);
-      return;
-    }
 
-    const renameFrom = removedHashToPath.get(fileHash);
-    if (renameFrom !== undefined) {
-      await this.deps.vectorStore.renameFile(renameFrom, file.relativePath, file.absolutePath);
-      removedHashToPath.delete(fileHash);
-      handledRemoved.add(renameFrom);
-      summary.filesRenamed++;
-      logger.info(`[RENAME] ${renameFrom} -> ${file.relativePath}`);
-      return;
-    }
+      const renameFrom = removedHashToPath.get(fileHash);
+      if (renameFrom !== undefined) {
+        await this.deps.vectorStore.renameFile(renameFrom, file.relativePath, file.absolutePath);
+        removedHashToPath.delete(fileHash);
+        handledRemoved.add(renameFrom);
+        summary.filesRenamed++;
+        logger.info(`[RENAME] ${renameFrom} -> ${file.relativePath}`);
+        return 'rename';
+      }
+
+      return 'index';
+    });
+
+    if (decision !== 'index') return;
 
     await this.indexFileContent(file, content, fileHash, summary);
   }
@@ -236,7 +256,7 @@ export class Indexer {
     logger.info(`[INDEX] ${file.relativePath} changed`);
 
     const { language, chunks } = await chunkFile(content, file.relativePath, config.indexing);
-    const existing = await vectorStore.getChunksForFile(file.relativePath);
+    const existing = await this.storeLock.run(() => vectorStore.getChunksForFile(file.relativePath));
     const existingById = new Map(existing.map((e) => [e.id, e]));
 
     const now = new Date().toISOString();
@@ -294,13 +314,15 @@ export class Indexer {
     }
 
     const staleIds = [...existingById.keys()].filter((id) => !newIds.has(id));
-    if (staleIds.length > 0) await vectorStore.deleteByIds(staleIds);
-    if (records.length > 0) await vectorStore.upsertChunks(records);
+    await this.storeLock.run(async () => {
+      if (staleIds.length > 0) await vectorStore.deleteByIds(staleIds);
+      if (records.length > 0) await vectorStore.upsertChunks(records);
 
-    summary.filesIndexed++;
-    summary.chunksReused += records.length - pendingEmbedTexts.length;
-    summary.chunksEmbedded += pendingEmbedTexts.length;
-    summary.chunksDeleted += staleIds.length;
+      summary.filesIndexed++;
+      summary.chunksReused += records.length - pendingEmbedTexts.length;
+      summary.chunksEmbedded += pendingEmbedTexts.length;
+      summary.chunksDeleted += staleIds.length;
+    });
 
     logger.info(`[CHUNK] ${chunks.length} chunks generated`, {
       reused: records.length - pendingEmbedTexts.length,
