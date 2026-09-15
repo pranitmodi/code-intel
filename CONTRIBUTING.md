@@ -19,10 +19,11 @@ ollama serve   # if it is not already running
 ```bash
 git clone https://github.com/pranitmodi/code-intel.git
 cd code-intel
-npm install
-npm run build
+./scripts/dev-link.sh    # npm install + build + npm link
 npm test
 ```
+
+Or the same steps by hand: `npm install && npm run build && npm test`. From this checkout you can also run `./scripts/onboard.sh --repo /path/to/your-project` instead of a global `code-intel onboard`.
 
 Unit tests in `tests/unit` never need Ollama. Integration tests in `tests/integration` talk to a real local model and **skip automatically** when Ollama or `nomic-embed-text` is missing.
 

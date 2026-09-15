@@ -1,9 +1,8 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { Command } from 'commander';
-import { Ollama } from 'ollama';
 import {
   applyCredentialsToEnv,
   resolveCorporateCredentials,
@@ -32,6 +31,7 @@ import { searchSymbol } from '../search/searchSymbol.js';
 import { getFileContext } from '../search/getFileContext.js';
 import { startMcpServer } from '../mcp/server.js';
 import { formatBytes } from '../utils/dirSize.js';
+import { runDoctor } from './doctor.js';
 import { runSavingsBenchmark } from '../usage/benchmark.js';
 import { formatSavingsReport, summarizeUsage } from '../usage/report.js';
 import { readBenchmark, readUsageEvents } from '../usage/store.js';
@@ -355,21 +355,54 @@ program
     await runIndex(resolveRepoRoot());
   });
 
+async function runSetup(options: { cursor?: boolean } = {}): Promise<void> {
+  const targets = await setupTargets(resolveRepoRoot());
+  for (const repoRoot of targets) {
+    const { repoId, paths } = scaffoldRepo(repoRoot, cliLoadOptions());
+    if (isIndexInsideRepo(paths)) {
+      addGitignoreEntry(repoRoot, paths.indexDir);
+    }
+    console.log(`Repository id: ${repoId}\n`);
+    await runIndex(repoRoot);
+  }
+  if (options.cursor) {
+    const config = loadConfig(cliLoadOptions());
+    const result = installCursorIntegration(
+      config.embedding.provider === 'openai-compatible' && config.embedding.useSystemCa
+        ? { serverEnv: cursorSystemCaEnv() }
+        : undefined
+    );
+    console.log(`\n${result.createdMcp ? 'Created' : 'Updated'} ${result.mcpPath}`);
+    console.log('Reload MCP in Cursor (Settings → MCP).');
+  } else {
+    console.log('\nIf Cursor is not wired up yet, run `code-intel cursor-install`.');
+  }
+  console.log('Done. Query this index from Cursor via the local-code-intelligence MCP tools.');
+}
+
 program
   .command('setup')
   .description('Scaffold and index the current repository in one step')
-  .action(async () => {
-    const targets = await setupTargets(resolveRepoRoot());
-    for (const repoRoot of targets) {
-      const { repoId, paths } = scaffoldRepo(repoRoot, cliLoadOptions());
-      if (isIndexInsideRepo(paths)) {
-        addGitignoreEntry(repoRoot, paths.indexDir);
-      }
-      console.log(`Repository id: ${repoId}\n`);
-      await runIndex(repoRoot);
+  .option('--cursor', 'also wire Cursor MCP, user rule, skill, and hooks')
+  .action(async (options: { cursor?: boolean }) => {
+    await runSetup({ cursor: Boolean(options.cursor) });
+  });
+
+program
+  .command('onboard')
+  .description('Pull the embedding model if needed, index this repo, and wire Cursor')
+  .option('--no-cursor', 'skip Cursor MCP / rule / skill install')
+  .action(async (options: { cursor?: boolean }) => {
+    const repoRoot = resolveRepoRoot();
+    const config = loadConfig(cliLoadOptions());
+    const healthy = await runDoctor({ repoRoot, config, fix: true });
+    if (!healthy) {
+      console.error('\nDoctor failed. Fix the issues above, then re-run `code-intel onboard`.');
+      process.exitCode = 1;
+      return;
     }
-    console.log('\nDone. Query this index from Cursor via the local-code-intelligence MCP tools.');
-    console.log('If Cursor is not wired up yet, run `code-intel cursor-install`.');
+    console.log('');
+    await runSetup({ cursor: options.cursor !== false });
   });
 
 program
@@ -584,59 +617,11 @@ program
 program
   .command('doctor')
   .description('Diagnose embedding provider, model, credentials, and database accessibility')
-  .action(async () => {
+  .option('--fix', 'pull a missing Ollama embedding model instead of only reporting it')
+  .action(async (options: { fix?: boolean }) => {
     const repoRoot = resolveRepoRoot();
     const config = loadConfig(cliLoadOptions());
-    let healthy = true;
-
-    if (config.embedding.provider === 'ollama') {
-      const client = new Ollama({ host: config.embedding.host });
-      try {
-        const { models } = await client.list();
-        console.log(`[OK] Ollama reachable at ${config.embedding.host}`);
-        const hasModel = models.some(
-          (model) => model.name === config.embedding.model || model.name.startsWith(`${config.embedding.model}:`)
-        );
-        if (hasModel) {
-          console.log(`[OK] Model "${config.embedding.model}" is available`);
-        } else {
-          healthy = false;
-          console.log(`[FAIL] Model "${config.embedding.model}" not found — run \`ollama pull ${config.embedding.model}\``);
-        }
-      } catch (error) {
-        healthy = false;
-        console.log(`[FAIL] Ollama not reachable at ${config.embedding.host} — is \`ollama serve\` running?`);
-        console.log(`       ${error instanceof Error ? error.message : String(error)}`);
-      }
-    } else {
-      try {
-        const provider = createEmbeddingProvider(config.embedding);
-        const dimensions = await provider.dimensions();
-        console.log(`[OK] Embedding proxy reachable at ${config.embedding.baseUrl}`);
-        console.log(`[OK] Model "${config.embedding.model}" returned ${dimensions}-dimension vectors`);
-      } catch (error) {
-        healthy = false;
-        console.log(`[FAIL] OpenAI-compatible embedding provider is not ready`);
-        console.log(`       ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-
-    const repoId = computeRepoId(repoRoot);
-    const paths = resolveRepoPaths(config, repoRoot, repoId);
-    try {
-      mkdirSync(paths.dbDir, { recursive: true });
-      const probeFile = `${paths.dbDir}/.write-probe`;
-      writeFileSync(probeFile, 'ok');
-      rmSync(probeFile);
-      console.log(`[OK] Index directory is writable (${paths.indexDir})`);
-    } catch (error) {
-      healthy = false;
-      console.log(`[FAIL] Index directory is not writable (${paths.indexDir})`);
-      console.log(`       ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    console.log(existsSync(paths.lockFile) ? '[INFO] A lock file is present — another process may be indexing.' : '[OK] No stale lock file.');
-
+    const healthy = await runDoctor({ repoRoot, config, fix: Boolean(options.fix) });
     if (!healthy) process.exitCode = 1;
   });
 

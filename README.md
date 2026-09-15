@@ -31,31 +31,24 @@ Requires Node.js 20+. The default provider also requires [Ollama](https://ollama
 
 ```bash
 npm install -g @pranitmodi/code-intel
-ollama pull nomic-embed-text
-code-intel doctor
-code-intel cursor-install          # wires Cursor MCP + the local-search rule
 cd /path/to/your-project
-code-intel setup                   # index this repo locally
+code-intel onboard                 # pull the model if needed, index, wire Cursor
 ```
 
-The package is scoped (`@pranitmodi/code-intel`) because npm rejected unscoped `code-intel` as too similar to existing [`codeintel`](https://www.npmjs.com/package/codeintel). The installed command is still `code-intel`.
+That one command replaces `ollama pull`, `doctor`, `setup`, and `cursor-install`. Reload MCP in Cursor (Settings → MCP) afterward.
 
-Reload MCP in Cursor (Settings → MCP). After that, agents query the local index instead of re-scanning the tree.
+The package is scoped (`@pranitmodi/code-intel`) because npm rejected unscoped `code-intel` as too similar to existing [`codeintel`](https://www.npmjs.com/package/codeintel). The installed command is still `code-intel`.
 
 Without a global install you can use `npx`:
 
 ```bash
-npx -y @pranitmodi/code-intel doctor
-npx -y @pranitmodi/code-intel setup --repo /path/to/your-project
-npx -y @pranitmodi/code-intel cursor-install
+npx -y @pranitmodi/code-intel onboard --repo /path/to/your-project
 ```
 
 From a git checkout (contributors):
 
 ```bash
-npm install
-npm run build
-npm link
+./scripts/dev-link.sh              # npm install + build + npm link
 ```
 
 ## Ollama setup
@@ -64,7 +57,7 @@ npm link
 ollama pull nomic-embed-text   # default embedding model, ~274MB
 ```
 
-`code-intel doctor` verifies Ollama is reachable and the model is present.
+`code-intel onboard` and `code-intel doctor --fix` pull that model for you if Ollama is running and the model is missing. `code-intel doctor` without `--fix` only reports whether Ollama and the model are reachable.
 
 ## OpenAI-compatible embeddings
 
@@ -132,7 +125,8 @@ From the root of the repository you want to index:
 
 ```bash
 cd /path/to/your-project
-code-intel setup     # scaffold + index in one step
+code-intel onboard   # model + index + Cursor (first time)
+code-intel setup     # scaffold + index only
 code-intel status    # files/chunks indexed, database size, staleness check
 ```
 
@@ -145,8 +139,10 @@ Re-run `code-intel index` any time after editing files — only new/changed chun
 ## CLI usage
 
 ```text
+code-intel onboard                 pull model if needed, index, wire Cursor
 code-intel wizard                  interactive Ollama vs company-proxy setup
 code-intel setup                   scaffold + index in one step
+code-intel setup --cursor          setup plus Cursor MCP / rule / skill
 code-intel corporate-setup         company-proxy wizard (prompts for key/user)
 code-intel init                    scaffold the index location
 code-intel index                   full/incremental index
@@ -157,6 +153,7 @@ code-intel symbol <name>           exact/fuzzy symbol lookup
 code-intel file <path> [--start N --end M]   exact source content
 code-intel status                  repo/index status
 code-intel doctor                  diagnose embedding provider/model/database health
+code-intel doctor --fix            same, and pull a missing Ollama model
 code-intel rebuild                 wipe and fully re-index
 code-intel clean                   remove the local index (not your source)
 code-intel cursor-install          merge ~/.cursor/mcp.json and write the user rule
