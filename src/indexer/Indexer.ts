@@ -1,12 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { statSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import type { CodeIntelConfig } from '../config/types.js';
 import type { RepoPaths } from '../config/paths.js';
 import { discoverFiles, type DiscoveredFile } from '../discovery/discover.js';
 import { looksBinary } from '../discovery/binary-check.js';
 import { containsLikelySecret } from '../discovery/secret-scan.js';
 import { chunkFile } from '../chunker/chunker.js';
+import { buildChunkExtraMetadata, serializeChunkExtraMetadata } from '../chunker/chunkMetadata.js';
 import { computeChunkId, hashChunkContent, hashFileContent } from '../hashing/hash.js';
 import { normalizeVector } from '../embeddings/vectorMath.js';
 import type { EmbeddingProvider } from '../embeddings/EmbeddingProvider.js';
@@ -17,7 +18,8 @@ import { createLogger } from '../utils/logger.js';
 import { mapPool, Mutex } from '../utils/pool.js';
 import { acquireLock } from './lock.js';
 import { registryEntryFrom, upsertRegistryEntry } from './registry.js';
-import { removeProgress, writeProgress, writeState, type IndexProgress } from './state.js';
+import { computeSampleFingerprint, pickSamplePaths } from './freshness.js';
+import { readState, removeProgress, writeProgress, writeState, type IndexProgress, type IndexState } from './state.js';
 
 const logger = createLogger('indexer');
 /** Safety cap so one abnormally large file (e.g. a generated bundle that slipped past ignore rules) can't stall a run. */
@@ -134,36 +136,120 @@ export class Indexer {
     summary.durationMs = Date.now() - started;
 
     const filesInIndex = summary.filesIndexed + summary.filesUnchanged + summary.filesRenamed;
+    await this.persistState(summary, {
+      filesIndexed: filesInIndex,
+      filesDiscovered: summary.filesDiscovered,
+      samplePaths: pickSamplePaths(discovered.map((file) => file.relativePath))
+    });
+    removeProgress(this.deps.paths.progressFile);
+
+    logger.info('[DONE]', { ...summary });
+    return summary;
+  }
+
+  /**
+   * Index or delete specific relative paths without walking the whole tree.
+   * Used by the file watcher. Callers should fall back to `runFullIndex` for large bursts.
+   */
+  async runChangedPaths(relativePaths: string[], deletedPaths: string[] = []): Promise<IndexSummary> {
+    const started = Date.now();
+    const release = acquireLock(this.deps.paths.lockFile);
+    try {
+      const { repoRoot, vectorStore } = this.deps;
+      const previousHashes = await vectorStore.getAllFileHashes();
+      const previous = readState(this.deps.paths.stateFile);
+      const removedHashToPath = new Map<string, string>();
+      const handledRemoved = new Set<string>();
+      const summary: IndexSummary = {
+        filesDiscovered: previous?.filesDiscovered ?? previousHashes.size,
+        filesIndexed: 0,
+        filesUnchanged: 0,
+        filesRenamed: 0,
+        filesDeleted: 0,
+        filesSkipped: 0,
+        chunksEmbedded: 0,
+        chunksReused: 0,
+        chunksDeleted: 0,
+        durationMs: 0
+      };
+
+      const uniqueDeletes = [...new Set(deletedPaths.filter(Boolean))];
+      for (const relativePath of uniqueDeletes) {
+        await vectorStore.deleteByFile(relativePath);
+        summary.filesDeleted++;
+        logger.info(`[DELETE] ${relativePath}`);
+      }
+
+      const uniqueUpserts = [...new Set(relativePaths.filter((path) => path && !uniqueDeletes.includes(path)))];
+      for (const relativePath of uniqueUpserts) {
+        const file: DiscoveredFile = {
+          relativePath,
+          absolutePath: join(repoRoot, ...relativePath.split('/'))
+        };
+        try {
+          await this.processDiscoveredFile(file, previousHashes, removedHashToPath, handledRemoved, summary);
+        } catch (error) {
+          if (!isEmbeddingInputTooLargeError(error)) throw error;
+          summary.filesSkipped++;
+          logger.warn(`[SKIP] ${relativePath} exceeds the embedding model context window after chunking`);
+        }
+      }
+
+      summary.durationMs = Date.now() - started;
+      const newFileCount = uniqueUpserts.filter((path) => !previousHashes.has(path)).length;
+      const deletedIndexedCount = uniqueDeletes.filter((path) => previousHashes.has(path)).length;
+      const netFiles = (previous?.filesIndexed ?? previousHashes.size) + newFileCount - deletedIndexedCount;
+      const filesDiscovered = Math.max(
+        0,
+        (previous?.filesDiscovered ?? previousHashes.size) + newFileCount - deletedIndexedCount
+      );
+      const remaining = [...previousHashes.keys(), ...uniqueUpserts].filter((path) => !uniqueDeletes.includes(path));
+      const keptSample = previous?.samplePaths?.filter((path) => !uniqueDeletes.includes(path)) ?? [];
+      const samplePaths = keptSample.length > 0 ? keptSample : pickSamplePaths(remaining);
+      await this.persistState(summary, {
+        filesIndexed: Math.max(0, netFiles),
+        filesDiscovered,
+        samplePaths
+      });
+      return summary;
+    } finally {
+      release();
+    }
+  }
+
+  private async persistState(
+    summary: IndexSummary,
+    counts: { filesIndexed: number; filesDiscovered: number; samplePaths: string[] }
+  ): Promise<void> {
+    const { repoRoot, vectorStore } = this.deps;
     const lastIndexedAt = new Date().toISOString();
     const embeddingModel = this.deps.embeddingProvider.modelName();
     const embeddingDimensions = await this.deps.embeddingProvider.dimensions();
     const chunksIndexed = await vectorStore.countRows();
-
-    writeState(this.deps.paths.stateFile, {
+    const sampleFingerprint = computeSampleFingerprint(repoRoot, counts.samplePaths) ?? undefined;
+    const state: IndexState = {
       lastIndexedAt,
       lastDurationMs: summary.durationMs,
-      filesIndexed: filesInIndex,
+      filesIndexed: counts.filesIndexed,
       chunksIndexed,
       embeddingModel,
       embeddingDimensions,
       repoRoot,
       repoName: basename(repoRoot),
-      filesDiscovered: summary.filesDiscovered
-    });
-
+      filesDiscovered: counts.filesDiscovered,
+      samplePaths: counts.samplePaths,
+      sampleFingerprint
+    };
+    writeState(this.deps.paths.stateFile, state);
     upsertRegistryEntry(
       this.deps.config.database.path,
       registryEntryFrom(repoRoot, this.deps.repoId, {
         lastIndexedAt,
-        filesIndexed: filesInIndex,
+        filesIndexed: counts.filesIndexed,
         chunksIndexed,
         embeddingModel
       })
     );
-    removeProgress(this.deps.paths.progressFile);
-
-    logger.info('[DONE]', { ...summary });
-    return summary;
   }
 
   private async processDiscoveredFile(
@@ -222,8 +308,12 @@ export class Indexer {
 
       if (previousHash !== undefined) {
         if (previousHash === fileHash) {
-          summary.filesUnchanged++;
-          return 'unchanged';
+          const existing = await this.deps.vectorStore.getChunksForFile(file.relativePath);
+          const missingMetadata = existing.some((chunk) => !chunk.extraMetadata);
+          if (!missingMetadata) {
+            summary.filesUnchanged++;
+            return 'unchanged';
+          }
         }
         return 'index';
       }
@@ -264,14 +354,23 @@ export class Indexer {
     const records: ChunkRecord[] = [];
     const pendingEmbedIndexes: number[] = [];
     const pendingEmbedTexts: string[] = [];
+    const occurrences = new Map<string, number>();
 
     chunks.forEach((chunk, index) => {
-      const id = computeChunkId(
-        repoId,
-        file.relativePath,
+      const identity: string[] = [
         chunk.parentSymbol ?? '',
         chunk.symbolType ?? 'text',
         chunk.symbolName ?? `#${index}`
+      ];
+      // Same-named siblings (overloads, repeated headings) share a symbol identity. LanceDB rejects a
+      // merge batch holding two rows with one key, so repeats are suffixed; the first keeps the bare
+      // id to stay reusable against indexes built before this.
+      const repeat = occurrences.get(identity.join(':')) ?? 0;
+      occurrences.set(identity.join(':'), repeat + 1);
+      const id = computeChunkId(
+        repoId,
+        file.relativePath,
+        ...(repeat === 0 ? identity : [...identity, `@${repeat}`])
       );
       newIds.add(id);
       const contentHash = hashChunkContent(chunk.content);
@@ -295,7 +394,9 @@ export class Indexer {
         embedding: reused && prior ? prior.embedding : [],
         last_indexed_at: now,
         git_commit: null,
-        extra_metadata: null
+        extra_metadata: serializeChunkExtraMetadata(
+          buildChunkExtraMetadata(file.relativePath, content, chunk.content, language)
+        )
       });
 
       if (!reused) {

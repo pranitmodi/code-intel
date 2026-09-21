@@ -1,5 +1,7 @@
 # code-intel: Next-Generation Agent Context Architecture
 
+> Historical implementation specification for the task-context work introduced in v0.2.0. Some acceptance items are now implemented and some remain future work. See the maintained [architecture](docs/ARCHITECTURE.md), [benchmarks](docs/BENCHMARKS.md), and [changelog](CHANGELOG.md) for current behavior.
+
 ## Purpose
 
 This document is the implementation specification for evolving `code-intel` from a local semantic code-search server into a **persistent context layer for AI coding agents**.

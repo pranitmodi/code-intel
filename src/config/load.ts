@@ -75,7 +75,33 @@ function applyRawConfig(base: CodeIntelConfig, raw: RawConfigFile | undefined): 
       defaultLimit: raw.search?.default_limit ?? base.search.defaultLimit,
       vectorWeight: raw.search?.vector_weight ?? base.search.vectorWeight,
       keywordWeight: raw.search?.keyword_weight ?? base.search.keywordWeight,
-      symbolWeight: raw.search?.symbol_weight ?? base.search.symbolWeight
+      symbolWeight: raw.search?.symbol_weight ?? base.search.symbolWeight,
+      pathWeight: raw.search?.path_weight ?? base.search.pathWeight,
+      structuralWeight: raw.search?.structural_weight ?? base.search.structuralWeight,
+      dependencyWeight: raw.search?.dependency_weight ?? base.search.dependencyWeight,
+      referenceWeight: raw.search?.reference_weight ?? base.search.referenceWeight,
+      testWeight: raw.search?.test_weight ?? base.search.testWeight,
+      recencyWeight: raw.search?.recency_weight ?? base.search.recencyWeight,
+      maxChunksPerFile: raw.search?.max_chunks_per_file ?? base.search.maxChunksPerFile,
+      maxChunksPerSymbol: raw.search?.max_chunks_per_symbol ?? base.search.maxChunksPerSymbol
+    },
+    retrieval: {
+      seedResults: raw.retrieval?.seed_results ?? base.retrieval.seedResults,
+      maxExpansionHops: raw.retrieval?.max_expansion_hops ?? base.retrieval.maxExpansionHops,
+      maxContextChunks: raw.retrieval?.max_context_chunks ?? base.retrieval.maxContextChunks,
+      maxContextTokens: raw.retrieval?.max_context_tokens ?? base.retrieval.maxContextTokens,
+      confidenceThreshold: raw.retrieval?.confidence_threshold ?? base.retrieval.confidenceThreshold,
+      retrievalRequired: raw.retrieval?.retrieval_required ?? base.retrieval.retrievalRequired,
+      allowFallbackAfterFailedRetrieval:
+        raw.retrieval?.allow_fallback_after_failed_retrieval ??
+        base.retrieval.allowFallbackAfterFailedRetrieval
+    },
+    benchmark: {
+      maxTokenRegressionPercent:
+        raw.benchmark?.max_token_regression_percent ?? base.benchmark.maxTokenRegressionPercent,
+      minPrecisionAt5: raw.benchmark?.min_precision_at_5 ?? base.benchmark.minPrecisionAt5,
+      minRecallAt10: raw.benchmark?.min_recall_at_10 ?? base.benchmark.minRecallAt10,
+      maxP95LatencyMs: raw.benchmark?.max_p95_latency_ms ?? base.benchmark.maxP95LatencyMs
     },
     security: {
       allowSensitiveFiles: raw.security?.allow_sensitive_files ?? base.security.allowSensitiveFiles

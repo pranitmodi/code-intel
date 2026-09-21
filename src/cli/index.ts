@@ -26,20 +26,28 @@ import { isIndexInsideRepo, scaffoldRepo } from '../indexer/scaffold.js';
 import { getIndexStatus, listIndexedReposWithStale } from '../indexer/status.js';
 import { Indexer, type IndexSummary } from '../indexer/Indexer.js';
 import { watchRepo } from '../indexer/watch.js';
-import { searchCodebase } from '../search/searchCodebase.js';
+import { searchCodebaseDetailed } from '../search/searchCodebase.js';
 import { searchSymbol } from '../search/searchSymbol.js';
 import { getFileContext } from '../search/getFileContext.js';
 import { startMcpServer } from '../mcp/server.js';
 import { formatBytes } from '../utils/dirSize.js';
 import { runDoctor } from './doctor.js';
+import { formatCliFailure } from './formatCliFailure.js';
 import { runSavingsBenchmark } from '../usage/benchmark.js';
 import { formatSavingsReport, summarizeUsage } from '../usage/report.js';
 import { readBenchmark, readUsageEvents } from '../usage/store.js';
+import { formatSearchExplain } from '../retrieval/explain.js';
+import { formatContextPackage, getTaskContext } from '../retrieval/taskContext.js';
+import { runRetrievalBenchmark } from '../benchmark/runner.js';
 
+const packageVersion = (
+  JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as { version: string }
+).version;
 const program = new Command();
 program
   .name('code-intel')
   .description('Local-first semantic code indexing and retrieval, exposed to AI agents via MCP.')
+  .version(packageVersion)
   .option('--repo <path>', 'repository root (defaults to the current directory) — use this when a host spawns the process with an unrelated cwd')
   .option('--embedding-provider <name>', 'ollama or openai-compatible')
   .option('--embedding-model <name>', 'embedding model id (e.g. nomic-embed-text or Qwen3-Embedding-8B)')
@@ -506,28 +514,96 @@ program
   .description('Semantic + keyword + symbol hybrid search')
   .option('-l, --limit <number>', 'max results', (v) => Number.parseInt(v, 10))
   .option('--json', 'print raw JSON instead of a table')
-  .action(async (query: string, options: { limit?: number; json?: boolean }) => {
+  .option('--explain', 'print score breakdown, diversity drops, and token budget')
+  .action(async (query: string, options: { limit?: number; json?: boolean; explain?: boolean }) => {
     const context = await createContext(resolveRepoRoot(), cliLoadOptions());
-    const results = await searchCodebase(query, context.vectorStore, context.embeddingProvider, context.config.search, {
-      limit: options.limit
-    });
+    const detailed = await searchCodebaseDetailed(
+      query,
+      context.vectorStore,
+      context.embeddingProvider,
+      context.config.search,
+      { limit: options.limit }
+    );
 
     if (options.json) {
-      console.log(JSON.stringify({ results }, null, 2));
+      console.log(
+        JSON.stringify(
+          options.explain ? { results: detailed.results, trace: detailed.trace } : { results: detailed.results },
+          null,
+          2
+        )
+      );
       return;
     }
 
-    if (results.length === 0) {
+    if (options.explain) {
+      console.log(formatSearchExplain(detailed.trace, detailed.selected));
+      console.log('');
+    }
+
+    if (detailed.results.length === 0) {
       console.log('No results.');
       return;
     }
-    results.forEach((result, index) => {
+    detailed.results.forEach((result, index) => {
       console.log(`${index + 1}. ${result.file}`);
       if (result.symbol) console.log(`   ${result.symbol}`);
       console.log(`   lines ${result.startLine}-${result.endLine}`);
       console.log(`   similarity: ${result.score}`);
       console.log();
     });
+  });
+
+program
+  .command('context <task>')
+  .description('Assemble a minimal task-oriented context package')
+  .option('--max-tokens <number>', 'hard token budget', (v) => Number.parseInt(v, 10))
+  .option('--mode <mode>', 'minimal | normal | deep')
+  .option('--explain', 'include retrieval trace')
+  .option('--json', 'print JSON')
+  .action(
+    async (
+      task: string,
+      options: { maxTokens?: number; mode?: string; explain?: boolean; json?: boolean }
+    ) => {
+      const repoRoot = resolveRepoRoot();
+      const context = await createContext(repoRoot, cliLoadOptions());
+      const status = await getIndexStatus(repoRoot);
+      const mode =
+        options.mode === 'minimal' || options.mode === 'normal' || options.mode === 'deep'
+          ? options.mode
+          : undefined;
+      const pkg = await getTaskContext(task, context, {
+        maxTokens: options.maxTokens,
+        mode,
+        stale: status.stale
+      });
+      if (options.json) {
+        const payload = options.explain ? pkg : { ...pkg, trace: undefined };
+        console.log(JSON.stringify(payload, null, 2));
+        return;
+      }
+      console.log(formatContextPackage(pkg, Boolean(options.explain)));
+    }
+  );
+
+program
+  .command('benchmark')
+  .description('Compare workspace-scan, semantic-search, and task-context retrieval')
+  .option('--format <fmt>', 'text or json', 'text')
+  .option('--task <id>', 'run a single labeled task')
+  .action(async (options: { format?: string; task?: string }) => {
+    const report = await runRetrievalBenchmark({
+      repoRoot: resolveRepoRoot(),
+      taskId: options.task,
+      loadOptions: cliLoadOptions()
+    });
+    if (options.format === 'json') {
+      const { text: _text, ...json } = report;
+      console.log(JSON.stringify(json, null, 2));
+      return;
+    }
+    console.log(report.text);
   });
 
 program
@@ -607,10 +683,15 @@ program
       );
     }
 
-    if (status.stale && status.filesDiscoverable != null) {
-      console.log(
-        `\nStale index: ${status.filesDiscoverable} files currently discoverable vs ${status.filesIndexed} at last index — run \`code-intel index\`.`
-      );
+    if (status.stale) {
+      const countHint =
+        status.filesDiscoverable != null
+          ? `${status.filesDiscoverable} files currently discoverable vs ${status.filesIndexed} at last index`
+          : 'working-tree content no longer matches the stored sample';
+      console.log(`\nStale index: ${countHint} — run \`code-intel index\`.`);
+    }
+    if (status.watch?.lastError) {
+      console.log(`\nWatch: last error at ${status.watch.lastErrorAt ?? 'unknown'}: ${status.watch.lastError}`);
     }
   });
 
@@ -640,7 +721,7 @@ program
 
 program
   .command('rebuild')
-  .description('Remove the local index and rebuild it from scratch')
+  .description('Remove the local index and rebuild it from scratch (also backfills extra_metadata)')
   .action(async () => {
     const repoRoot = resolveRepoRoot();
     const config = loadConfig(cliLoadOptions());
@@ -701,6 +782,6 @@ program
   });
 
 void program.parseAsync(process.argv).catch((error: unknown) => {
-  console.error(`[FAIL] ${error instanceof Error ? error.message : String(error)}`);
+  console.error(formatCliFailure(error));
   process.exitCode = 1;
 });

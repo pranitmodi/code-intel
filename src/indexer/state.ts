@@ -14,6 +14,9 @@ export interface IndexState {
   repoName?: string;
   /** Discoverable file count at last index (used for stale detection, including skipped files). */
   filesDiscovered?: number;
+  /** Stable subset of relative paths hashed to detect edits that do not change file count. */
+  samplePaths?: string[];
+  sampleFingerprint?: string;
 }
 
 export interface IndexProgress {

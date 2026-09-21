@@ -4,6 +4,7 @@ import type { CodeIntelConfig } from '../config/types.js';
 import { resolveRepoPaths } from '../config/paths.js';
 import { computeRepoId } from '../utils/repo-id.js';
 import { createEmbeddingProvider } from '../embeddings/createEmbeddingProvider.js';
+import { formatCliFailure } from './formatCliFailure.js';
 
 export function ollamaHasModel(models: Array<{ name: string }>, model: string): boolean {
   return models.some((entry) => entry.name === model || entry.name.startsWith(`${model}:`));
@@ -44,15 +45,19 @@ export async function runDoctor(options: {
         console.log(`[OK] Model "${config.embedding.model}" is available`);
       } else {
         healthy = false;
-        const hint = fix
-          ? `could not pull "${config.embedding.model}"`
-          : `run \`code-intel doctor --fix\` or \`ollama pull ${config.embedding.model}\``;
-        console.log(`[FAIL] Model "${config.embedding.model}" not found — ${hint}`);
+        console.log(
+          formatCliFailure(
+            new Error(
+              fix
+                ? `Ollama model "${config.embedding.model}" is not available locally (pull failed).`
+                : `Ollama model "${config.embedding.model}" is not available locally.`
+            )
+          )
+        );
       }
     } catch (error) {
       healthy = false;
-      console.log(`[FAIL] Ollama not reachable at ${config.embedding.host} — is \`ollama serve\` running?`);
-      console.log(`       ${error instanceof Error ? error.message : String(error)}`);
+      console.log(formatCliFailure(error));
     }
   } else {
     try {
@@ -62,8 +67,7 @@ export async function runDoctor(options: {
       console.log(`[OK] Model "${config.embedding.model}" returned ${dimensions}-dimension vectors`);
     } catch (error) {
       healthy = false;
-      console.log(`[FAIL] OpenAI-compatible embedding provider is not ready`);
-      console.log(`       ${error instanceof Error ? error.message : String(error)}`);
+      console.log(formatCliFailure(error));
     }
   }
 
@@ -77,8 +81,8 @@ export async function runDoctor(options: {
     console.log(`[OK] Index directory is writable (${paths.indexDir})`);
   } catch (error) {
     healthy = false;
-    console.log(`[FAIL] Index directory is not writable (${paths.indexDir})`);
-    console.log(`       ${error instanceof Error ? error.message : String(error)}`);
+    const detail = error instanceof Error ? error.message : String(error);
+    console.log(formatCliFailure(new Error(`Index directory is not writable (${paths.indexDir}): ${detail}`)));
   }
 
   console.log(

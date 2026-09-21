@@ -1,5 +1,7 @@
 # Build a Local Persistent Code Intelligence Server
 
+> Historical design specification. This document records the original implementation brief and may describe targets rather than current behavior. For maintained documentation, use the [README](README.md), [architecture](docs/ARCHITECTURE.md), and [benchmarks](docs/BENCHMARKS.md).
+
 I want you to build a **local-first semantic code indexing and retrieval system** for software repositories.
 
 The goal is to create a reusable local service that indexes an entire codebase into a **local vector database**, continuously keeps that index synchronized with the repository as files change, and exposes semantic code search to AI coding agents through **MCP**.

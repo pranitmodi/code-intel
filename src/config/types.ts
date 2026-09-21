@@ -39,6 +39,31 @@ export interface SearchConfig {
   vectorWeight: number;
   keywordWeight: number;
   symbolWeight: number;
+  pathWeight: number;
+  structuralWeight: number;
+  dependencyWeight: number;
+  referenceWeight: number;
+  testWeight: number;
+  recencyWeight: number;
+  maxChunksPerFile: number;
+  maxChunksPerSymbol: number;
+}
+
+export interface RetrievalConfig {
+  seedResults: number;
+  maxExpansionHops: number;
+  maxContextChunks: number;
+  maxContextTokens: number;
+  confidenceThreshold: number;
+  retrievalRequired: boolean;
+  allowFallbackAfterFailedRetrieval: boolean;
+}
+
+export interface BenchmarkConfig {
+  maxTokenRegressionPercent: number;
+  minPrecisionAt5: number;
+  minRecallAt10: number;
+  maxP95LatencyMs: number;
 }
 
 export interface SecurityConfig {
@@ -50,6 +75,8 @@ export interface CodeIntelConfig {
   database: DatabaseConfig;
   indexing: IndexingConfig;
   search: SearchConfig;
+  retrieval: RetrievalConfig;
+  benchmark: BenchmarkConfig;
   security: SecurityConfig;
   /** Additional user-provided ignore patterns, on top of the built-in defaults. */
   ignore: string[];
@@ -82,6 +109,29 @@ export interface RawConfigFile {
     vector_weight: number;
     keyword_weight: number;
     symbol_weight: number;
+    path_weight: number;
+    structural_weight: number;
+    dependency_weight: number;
+    reference_weight: number;
+    test_weight: number;
+    recency_weight: number;
+    max_chunks_per_file: number;
+    max_chunks_per_symbol: number;
+  }>;
+  retrieval?: Partial<{
+    seed_results: number;
+    max_expansion_hops: number;
+    max_context_chunks: number;
+    max_context_tokens: number;
+    confidence_threshold: number;
+    retrieval_required: boolean;
+    allow_fallback_after_failed_retrieval: boolean;
+  }>;
+  benchmark?: Partial<{
+    max_token_regression_percent: number;
+    min_precision_at_5: number;
+    min_recall_at_10: number;
+    max_p95_latency_ms: number;
   }>;
   security?: Partial<{
     allow_sensitive_files: boolean;

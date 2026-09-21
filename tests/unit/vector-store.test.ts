@@ -58,6 +58,16 @@ describe('LanceVectorStore', () => {
     expect(chunks[0]?.contentHash).toBe('hash-2');
   });
 
+  it('collapses duplicate ids in one batch rather than failing the merge', async () => {
+    await store.upsertChunks([
+      makeChunk({ content_hash: 'hash-first' }),
+      makeChunk({ content_hash: 'hash-last' })
+    ]);
+    const chunks = await store.getChunksForFile('src/auth.ts');
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]?.contentHash).toBe('hash-last');
+  });
+
   it('tracks file hashes for incremental diffing', async () => {
     await store.upsertChunks([makeChunk({})]);
     const hashes = await store.getAllFileHashes();
