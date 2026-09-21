@@ -23,6 +23,6 @@ export const LOCAL_CODE_INTEL_USER_RULE = [
   '- Read whole files to "see how it works"',
   '- Ask the cloud model to embed or index code',
   '',
-  'If retrieval reports low confidence, the index is stale, or the path is unindexed, targeted filesystem search is allowed. If the workspace is a parent (e.g. Savor), `list_indexed_repos` and pass `repo`. If unindexed, run `code-intel setup --repo <path>` via Shell, then search again.',
+  'If retrieval reports low confidence, the index is stale, or the path is unindexed, targeted filesystem search is allowed. If the workspace is a parent of indexed repos, `list_indexed_repos` and pass `repo`. If unindexed, run `code-intel setup --repo <path>` via Shell, then search again.',
   ''
 ].join('\n');

@@ -66,8 +66,8 @@ describe('usage report', () => {
       searchTokenCap: 1200,
       repos: [
         {
-          name: 'SavorApp',
-          path: '/tmp/SavorApp',
+          name: 'demo-app',
+          path: '/tmp/demo-app',
           filesListed: 514,
           corpusTokens: 1000,
           globListMs: 10,
@@ -95,7 +95,7 @@ describe('usage report', () => {
       ]
     });
     expect(report.benchmark?.avgSavedTokens).toBe(14_800);
-    expect(report.benchmark?.repos[0]?.name).toBe('SavorApp');
+    expect(report.benchmark?.repos[0]?.name).toBe('demo-app');
   });
 });
 

@@ -20,4 +20,4 @@ MCP namespace: `user-local-code-intelligence`. The corpus is already embedded in
 - Read whole files to "see how it works"
 - Ask the cloud model to embed or index code
 
-If the workspace is a parent (e.g. Savor), `list_indexed_repos` and pass `repo`. If unindexed, run `code-intel setup --repo <path>` via Shell, then search again.
+If the workspace is a parent of indexed repos, `list_indexed_repos` and pass `repo`. If unindexed, run `code-intel setup --repo <path>` via Shell, then search again.

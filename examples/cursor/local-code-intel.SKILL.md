@@ -17,7 +17,7 @@ Corpus embeddings already live in local LanceDB. Ollama (`nomic-embed-text`) emb
 
 ## Required order
 
-1. For a new or broad coding task, use `get_task_context` (optional `repo` for Savor children).
+1. For a new or broad coding task, use `get_task_context` (optional `repo` for a child of a parent workspace).
 2. For a known symbol, use `search_symbol`.
 3. For conceptual exploration, use `search_codebase` with `max_tokens` 800–1500.
 4. For call-site analysis, use `find_references`.

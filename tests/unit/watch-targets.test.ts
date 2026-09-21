@@ -3,14 +3,14 @@ import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import { watchTargetsForWorkspace } from '../../src/mcp/watchOnStart.js';
 
 describe('watchTargetsForWorkspace', () => {
-  const savor = '/Users/me/Savor - Food with friends';
-  const admin = `${savor}/savor-admin`;
-  const web = `${savor}/savor-web`;
-  const app = `${savor}/SavorApp`;
-  const other = '/Users/me/LocalCodeDB';
+  const parent = '/Users/me/workspace';
+  const admin = `${parent}/admin`;
+  const web = `${parent}/web`;
+  const app = `${parent}/app`;
+  const other = '/Users/me/other-project';
 
   it('watches indexed children when the workspace is a parent folder', () => {
-    expect(watchTargetsForWorkspace(savor, [admin, web, app, other])).toEqual([admin, web, app]);
+    expect(watchTargetsForWorkspace(parent, [admin, web, app, other])).toEqual([admin, web, app]);
   });
 
   it('watches only the repo when the workspace itself is indexed', () => {

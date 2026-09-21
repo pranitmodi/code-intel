@@ -66,27 +66,6 @@ Do not improve metrics by broadening the context until it resembles a tree scan.
 
 When adding a benchmark task, use a realistic engineering request and defensible relevant files. Avoid tasks designed around the current ranker's implementation.
 
-## Publishing (maintainers)
-
-Releases are made from a clean, tested `main` commit:
-
-```bash
-npm run typecheck
-npm run test:unit
-npm run build
-npm run benchmark:retrieval
-npm audit --omit=dev
-npm pack --dry-run
-npm login
-npm publish --access public
-```
-
-The package name is `@pranitmodi/code-intel` (scoped; unscoped `code-intel` is blocked by npm as too similar to `codeintel`).
-
-`prepublishOnly` builds `dist/` and runs unit tests. Inspect the tarball before publishing. It must contain only the built CLI/server and public documentation—never indexes, `.code-intel` config, credentials, private paths, benchmark secrets, or `~/.local-code-intelligence` data.
-
-Update [CHANGELOG.md](CHANGELOG.md), bump `package.json` and `package-lock.json` together, tag the exact published commit, verify it with `npm view`, and create a matching GitHub release.
-
 ## Pull requests
 
 - Keep changes focused; match the existing module boundaries (`src/discovery`, `src/chunker`, `src/embeddings`, `src/vector-store`, `src/indexer`, `src/search`, `src/retrieval`, `src/benchmark`, `src/mcp`).
@@ -95,6 +74,8 @@ Update [CHANGELOG.md](CHANGELOG.md), bump `package.json` and `package-lock.json`
 - Run `npm run typecheck` and `npm run test:unit` before opening a PR.
 - Keep public examples provider-neutral. Do not commit organization-specific endpoints, usernames, paths, source, or benchmark credentials.
 - Update documentation when changing CLI commands, MCP tools, privacy boundaries, storage, or watcher behavior.
+
+npm publishing, version tags, and GitHub releases are maintainer-only. Open a pull request; do not publish the package yourself.
 
 ## Security
 
