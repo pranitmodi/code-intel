@@ -17,9 +17,11 @@ Corpus embeddings already live in local LanceDB. Ollama (`nomic-embed-text`) emb
 
 ## Required order
 
-1. `search_codebase` with `max_tokens` 800–1500 (optional `repo` for Savor children)
-2. `search_symbol` / `find_references` when you have a name
-3. `get_file_context` with a line range for the hit you will change
-4. Grep/Glob/Read only after those miss, and only on a specific file or subdirectory
+1. For a new or broad coding task, use `get_task_context` (optional `repo` for Savor children).
+2. For a known symbol, use `search_symbol`.
+3. For conceptual exploration, use `search_codebase` with `max_tokens` 800–1500.
+4. For call-site analysis, use `find_references`.
+5. Use `get_file_context` with a line range for the hit you will change.
+6. Grep/Glob/Read only after those miss, after a low-confidence retrieval, or when the index is stale/unindexed — and only against a specific file or subdirectory.
 
 If `index_status` says unindexed, run `code-intel setup --repo <path>` via Shell, then search again.

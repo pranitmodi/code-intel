@@ -13,6 +13,8 @@ describe('onboard CLI', () => {
   it('exposes onboard and doctor --fix in help', async () => {
     const { stdout: rootHelp } = await execFileAsync(tsx, [cli, '--help'], { cwd: projectRoot });
     expect(rootHelp).toContain('onboard');
+    expect(rootHelp).toContain('context');
+    expect(rootHelp).toContain('benchmark');
     expect(rootHelp).toMatch(/pull the embedding model|index this repo|wire Cursor/i);
 
     const { stdout: doctorHelp } = await execFileAsync(tsx, [cli, 'doctor', '--help'], {

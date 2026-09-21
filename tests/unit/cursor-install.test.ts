@@ -38,6 +38,7 @@ describe('cursor-install', () => {
     expect(mcp.mcpServers['local-code-intelligence'].command).toBe('node');
     const rule = await readFile(join(cursorHome, 'rules', LOCAL_CODE_INTEL_RULE_FILENAME), 'utf-8');
     expect(rule).toContain('alwaysApply: true');
+    expect(rule).toContain('get_task_context');
     expect(rule).toContain('search_codebase');
     const hooks = JSON.parse(await readFile(result.hooksPath, 'utf-8')) as {
       hooks: { preToolUse: { matcher: string }[]; sessionStart: { command: string }[] };

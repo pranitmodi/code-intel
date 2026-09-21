@@ -149,18 +149,23 @@ code-intel index                   full/incremental index
 code-intel watch                   incremental re-index on file changes
 code-intel repos                   list every locally indexed repository
 code-intel search "<query>"        hybrid semantic+keyword+symbol search
+code-intel search "<query>" --explain   score breakdown, diversity, token budget
+code-intel context "<task>"        assemble a task-oriented context package
+code-intel context "<task>" --mode minimal --max-tokens 8000 --explain
 code-intel symbol <name>           exact/fuzzy symbol lookup
 code-intel file <path> [--start N --end M]   exact source content
 code-intel status                  repo/index status
 code-intel doctor                  diagnose embedding provider/model/database health
 code-intel doctor --fix            same, and pull a missing Ollama model
-code-intel rebuild                 wipe and fully re-index
+code-intel rebuild                 wipe and fully re-index (backfills extra_metadata)
 code-intel clean                   remove the local index (not your source)
 code-intel cursor-install          merge ~/.cursor/mcp.json and write the user rule
 code-intel mcp                     start the MCP server over stdio (watch on by default)
 code-intel mcp --no-watch          start the MCP server without file watchers
 code-intel savings                 estimate token/$ savings vs tree scans
 code-intel savings --benchmark     re-run the Grep vs search A/B on indexed repos
+code-intel benchmark               labeled retrieval quality vs workspace-scan baseline
+code-intel benchmark --format json --task <id>
 ```
 
 Every command accepts `--repo <path>` to target a repository other than the current directory — this is what makes MCP configuration below work regardless of the IDE's spawn working directory.
@@ -215,7 +220,7 @@ code-intel cursor-install
 That merges `~/.cursor/mcp.json` (it will not drop other MCP servers), writes an always-on user rule and skill, and installs hooks that:
 
 - Inject the indexed-repo list at session start
-- Block workspace-wide Grep/Glob and Task `explore` so the agent has to hit `search_codebase` first
+- Block workspace-wide Grep/Glob and Task `explore` so the agent has to hit `get_task_context` / `search_codebase` first (targeted filesystem search is allowed after low-confidence retrieval)
 
 Then reload MCP in Cursor (Settings → MCP).
 
@@ -223,7 +228,7 @@ The checked-in example is [examples/mcp/cursor.mcp.json](examples/mcp/cursor.mcp
 
 Note the different top-level key (`mcpServers` vs VS Code's `servers`) — this is a real difference between the two clients' config formats, not a typo.
 
-Both IDEs will then list `search_codebase`, `search_symbol`, `get_file_context`, `get_repo_context`, `find_references`, `list_indexed_repos`, and `index_status` as available tools, backed by the index you already built with `code-intel setup` — the agent never re-scans or re-embeds your repository itself.
+Both IDEs will then list `get_task_context`, `search_codebase`, `search_symbol`, `get_file_context`, `get_repo_context`, `find_references`, `list_indexed_repos`, and `index_status` as available tools, backed by the index you already built with `code-intel setup` — the agent never re-scans or re-embeds your repository itself.
 
 ## Database location
 
@@ -263,6 +268,22 @@ search:
   vector_weight: 0.7
   keyword_weight: 0.2
   symbol_weight: 0.1
+  path_weight: 0.05
+  structural_weight: 0.05
+  dependency_weight: 0.08
+  reference_weight: 0.08
+  test_weight: 0.03
+  recency_weight: 0.02
+  max_chunks_per_file: 4
+  max_chunks_per_symbol: 2
+retrieval:
+  seed_results: 8
+  max_expansion_hops: 2
+  max_context_chunks: 20
+  max_context_tokens: 12000
+  confidence_threshold: 0.15
+  retrieval_required: true
+  allow_fallback_after_failed_retrieval: true
 security:
   allow_sensitive_files: false
 ignore: []
@@ -274,7 +295,7 @@ ignore: []
 - "Model not found" — run `ollama pull <model>` for whatever `embedding.model` is configured.
 - Proxy authentication failures — set `CODE_INTEL_EMBEDDING_API_KEY` (and `CODE_INTEL_EMBEDDING_USER` if required) in both your shell and the MCP server `env` block.
 - MCP tools not appearing — reload the IDE's MCP servers list; check the IDE's MCP output/log panel for the spawned process's stderr.
-- Switching embedding models requires `code-intel rebuild` (a different model produces vectors in a different space).
+- Switching embedding models requires `code-intel rebuild` (a different model produces vectors in a different space). Rebuild is also the way to backfill `extra_metadata` (imports/exports/test/config flags) on an index created before those fields were populated. Incremental `code-intel index` fills metadata on files that change.
 
 ## Performance considerations
 

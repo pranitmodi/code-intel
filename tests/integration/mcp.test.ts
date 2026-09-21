@@ -20,6 +20,7 @@ const ALL_TOOLS = [
   'find_references',
   'get_file_context',
   'get_repo_context',
+  'get_task_context',
   'index_status',
   'list_indexed_repos',
   'search_codebase',
@@ -71,7 +72,7 @@ describe('MCP server without an index', () => {
     await rm(dbHome, { recursive: true, force: true });
   });
 
-  it('starts and exposes list/status plus the five retrieval tools', async () => {
+  it('starts and exposes list/status plus retrieval tools', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(ALL_TOOLS);
   });
@@ -85,6 +86,14 @@ describe('MCP server without an index', () => {
   it('search_codebase returns an index hint instead of crashing', async () => {
     const payload = parseToolText(
       await client.callTool({ name: 'search_codebase', arguments: { query: 'anything' } })
+    );
+    expect(payload.ok).toBe(false);
+    expect(payload.indexed).toBe(false);
+  });
+
+  it('get_task_context returns an index hint for an unindexed repo', async () => {
+    const payload = parseToolText(
+      await client.callTool({ name: 'get_task_context', arguments: { task: 'add rate limiting' } })
     );
     expect(payload.ok).toBe(false);
     expect(payload.indexed).toBe(false);

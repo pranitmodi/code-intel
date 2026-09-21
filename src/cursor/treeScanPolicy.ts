@@ -11,7 +11,7 @@ const EXPLORE_TASK =
   /\b(explor(e|ing)|search the (code|repo|codebase)|find where|how does)\b/i;
 
 export const TREE_SCAN_DENY_MESSAGE =
-  'Use MCP user-local-code-intelligence first (search_codebase / search_symbol / get_file_context). Corpus embeddings already live in local LanceDB; Ollama only embeds the query. Grep/Glob/explore is allowed only after those tools miss, and only against a specific file or subdirectory — not the whole repo.';
+  'Use MCP user-local-code-intelligence first (get_task_context / search_codebase / search_symbol / get_file_context). Corpus embeddings already live in local LanceDB; Ollama only embeds the query. Grep/Glob/explore is allowed after those tools miss, after low-confidence retrieval, or against a specific file or subdirectory — not the whole repo.';
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -33,7 +33,12 @@ export function isWorkspaceRoot(target: string | undefined, roots: string[]): bo
   return roots.some((root) => normalized === root.replace(/\/+$/, '') || normalized === '.');
 }
 
-export function shouldDenyTreeScan(input: TreeScanInput): boolean {
+export interface TreeScanPolicyOptions {
+  /** When true, workspace-wide Grep/Glob is allowed (low-confidence / stale / unindexed retrieval). Explore tasks stay denied. */
+  allowFallback?: boolean;
+}
+
+export function shouldDenyTreeScan(input: TreeScanInput, options: TreeScanPolicyOptions = {}): boolean {
   const event = input.hook_event_name ?? '';
   const tool = input.tool_name ?? '';
   const args = input.tool_input ?? {};
@@ -47,6 +52,10 @@ export function shouldDenyTreeScan(input: TreeScanInput): boolean {
     const sub = asString(args.subagent_type) || asString(args.subagentType);
     const blob = [args.description, args.prompt, args.task].map(asString).join(' ');
     return sub === 'explore' || EXPLORE_TASK.test(blob);
+  }
+
+  if (options.allowFallback && (tool === 'Grep' || tool === 'Glob')) {
+    return false;
   }
 
   if (tool === 'Grep') {

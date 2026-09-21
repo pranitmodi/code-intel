@@ -44,6 +44,7 @@
     "typecheck": "tsc --noEmit",
     "link": "npm run build && npm link",
     "onboard": "node dist/cli/index.js onboard",
+    "benchmark:retrieval": "tsx src/cli/index.ts benchmark --format json",
     "prepublishOnly": "npm run build && npm run test:unit"
   },
   "dependencies": {

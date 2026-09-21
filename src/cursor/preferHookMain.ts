@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
+import { loadConfig } from '../config/load.js';
 import { recordDeniedScan } from '../usage/record.js';
+import { isFilesystemFallbackOpen } from '../retrieval/fallback.js';
 import { shouldDenyTreeScan, TREE_SCAN_DENY_MESSAGE, type TreeScanInput } from './treeScanPolicy.js';
 
 function readStdin(): TreeScanInput {
@@ -12,7 +14,11 @@ function readStdin(): TreeScanInput {
 }
 
 const input = readStdin();
-if (shouldDenyTreeScan(input)) {
+const config = loadConfig();
+const allowFallback =
+  config.retrieval.allowFallbackAfterFailedRetrieval && isFilesystemFallbackOpen(config.database.path);
+
+if (shouldDenyTreeScan(input, { allowFallback })) {
   recordDeniedScan(input);
   process.stdout.write(
     JSON.stringify({

@@ -10,6 +10,7 @@ export interface FileChunkSummary {
   startLine: number;
   endLine: number;
   embedding: number[];
+  extraMetadata: string | null;
 }
 
 /**
@@ -71,13 +72,14 @@ export class LanceVectorStore {
   /** Upsert by `id` — matched rows are fully replaced (new embedding/content/lines), unmatched rows are inserted. */
   async upsertChunks(records: ChunkRecord[]): Promise<void> {
     if (records.length === 0) return;
+    const batch = dedupeById(records);
     // `ChunkRecord` is an exact interface (no index signature) but LanceDB's `Data` param requires one;
     // the object shapes are otherwise identical, so this cast is safe.
     await this.table
       .mergeInsert('id')
       .whenMatchedUpdateAll()
       .whenNotMatchedInsertAll()
-      .execute(records as unknown as Record<string, unknown>[]);
+      .execute(batch as unknown as Record<string, unknown>[]);
   }
 
   async deleteByFile(filePath: string): Promise<void> {
@@ -110,14 +112,15 @@ export class LanceVectorStore {
     const rows = await this.table
       .query()
       .where(`file_path = '${escapeSqlString(filePath)}'`)
-      .select(['id', 'content_hash', 'start_line', 'end_line', 'embedding'])
+      .select(['id', 'content_hash', 'start_line', 'end_line', 'embedding', 'extra_metadata'])
       .toArray();
     return rows.map((row) => ({
       id: String(row.id),
       contentHash: String(row.content_hash),
       startLine: Number(row.start_line),
       endLine: Number(row.end_line),
-      embedding: Array.from(row.embedding as ArrayLike<number>)
+      embedding: Array.from(row.embedding as ArrayLike<number>),
+      extraMetadata: row.extra_metadata == null ? null : String(row.extra_metadata)
     }));
   }
 
@@ -178,4 +181,18 @@ export class LanceVectorStore {
 
 function escapeSqlString(value: string): string {
   return value.replace(/'/g, "''");
+}
+
+/**
+ * LanceDB aborts a merge holding two source rows with the same key, which would fail the whole
+ * indexing pass over one file. Callers are expected to emit unique ids; last write wins otherwise.
+ */
+function dedupeById(records: ChunkRecord[]): ChunkRecord[] {
+  const byId = new Map<string, ChunkRecord>();
+  for (const record of records) byId.set(record.id, record);
+  if (byId.size === records.length) return records;
+  logger.warn(`Collapsed ${records.length - byId.size} duplicate chunk id(s) before merge`, {
+    file: records[0]?.file_path
+  });
+  return [...byId.values()];
 }

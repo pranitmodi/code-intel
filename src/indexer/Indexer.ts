@@ -7,6 +7,7 @@ import { discoverFiles, type DiscoveredFile } from '../discovery/discover.js';
 import { looksBinary } from '../discovery/binary-check.js';
 import { containsLikelySecret } from '../discovery/secret-scan.js';
 import { chunkFile } from '../chunker/chunker.js';
+import { buildChunkExtraMetadata, serializeChunkExtraMetadata } from '../chunker/chunkMetadata.js';
 import { computeChunkId, hashChunkContent, hashFileContent } from '../hashing/hash.js';
 import { normalizeVector } from '../embeddings/vectorMath.js';
 import type { EmbeddingProvider } from '../embeddings/EmbeddingProvider.js';
@@ -222,8 +223,12 @@ export class Indexer {
 
       if (previousHash !== undefined) {
         if (previousHash === fileHash) {
-          summary.filesUnchanged++;
-          return 'unchanged';
+          const existing = await this.deps.vectorStore.getChunksForFile(file.relativePath);
+          const missingMetadata = existing.some((chunk) => !chunk.extraMetadata);
+          if (!missingMetadata) {
+            summary.filesUnchanged++;
+            return 'unchanged';
+          }
         }
         return 'index';
       }
@@ -264,14 +269,23 @@ export class Indexer {
     const records: ChunkRecord[] = [];
     const pendingEmbedIndexes: number[] = [];
     const pendingEmbedTexts: string[] = [];
+    const occurrences = new Map<string, number>();
 
     chunks.forEach((chunk, index) => {
-      const id = computeChunkId(
-        repoId,
-        file.relativePath,
+      const identity: string[] = [
         chunk.parentSymbol ?? '',
         chunk.symbolType ?? 'text',
         chunk.symbolName ?? `#${index}`
+      ];
+      // Same-named siblings (overloads, repeated headings) share a symbol identity. LanceDB rejects a
+      // merge batch holding two rows with one key, so repeats are suffixed; the first keeps the bare
+      // id to stay reusable against indexes built before this.
+      const repeat = occurrences.get(identity.join(':')) ?? 0;
+      occurrences.set(identity.join(':'), repeat + 1);
+      const id = computeChunkId(
+        repoId,
+        file.relativePath,
+        ...(repeat === 0 ? identity : [...identity, `@${repeat}`])
       );
       newIds.add(id);
       const contentHash = hashChunkContent(chunk.content);
@@ -295,7 +309,9 @@ export class Indexer {
         embedding: reused && prior ? prior.embedding : [],
         last_indexed_at: now,
         git_commit: null,
-        extra_metadata: null
+        extra_metadata: serializeChunkExtraMetadata(
+          buildChunkExtraMetadata(file.relativePath, content, chunk.content, language)
+        )
       });
 
       if (!reused) {

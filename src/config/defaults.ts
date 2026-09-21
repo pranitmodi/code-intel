@@ -25,7 +25,30 @@ export const DEFAULT_CONFIG: CodeIntelConfig = {
     defaultLimit: 10,
     vectorWeight: 0.7,
     keywordWeight: 0.2,
-    symbolWeight: 0.1
+    symbolWeight: 0.1,
+    pathWeight: 0.05,
+    structuralWeight: 0.05,
+    dependencyWeight: 0.08,
+    referenceWeight: 0.08,
+    testWeight: 0.03,
+    recencyWeight: 0.02,
+    maxChunksPerFile: 4,
+    maxChunksPerSymbol: 2
+  },
+  retrieval: {
+    seedResults: 8,
+    maxExpansionHops: 2,
+    maxContextChunks: 20,
+    maxContextTokens: 12_000,
+    confidenceThreshold: 0.15,
+    retrievalRequired: true,
+    allowFallbackAfterFailedRetrieval: true
+  },
+  benchmark: {
+    maxTokenRegressionPercent: 10,
+    minPrecisionAt5: 0.75,
+    minRecallAt10: 0.8,
+    maxP95LatencyMs: 1000
   },
   security: {
     allowSensitiveFiles: false

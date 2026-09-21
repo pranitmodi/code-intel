@@ -30,6 +30,7 @@ Unit tests in `tests/unit` never need Ollama. Integration tests in `tests/integr
 ```bash
 npm run typecheck
 npm run test:unit          # CI default
+npm run benchmark:retrieval  # labeled retrieval metrics (needs an index + embeddings)
 npm test                   # unit + integration (integration skipped without Ollama)
 npm run dev -- status      # CLI from source, no build step
 ```
@@ -63,7 +64,7 @@ The package name is `@pranitmodi/code-intel` (scoped; unscoped `code-intel` is b
 
 ## Pull requests
 
-- Keep changes focused; match the existing module boundaries (`src/discovery`, `src/chunker`, `src/embeddings`, `src/vector-store`, `src/indexer`, `src/search`, `src/mcp`).
+- Keep changes focused; match the existing module boundaries (`src/discovery`, `src/chunker`, `src/embeddings`, `src/vector-store`, `src/indexer`, `src/search`, `src/retrieval`, `src/benchmark`, `src/mcp`).
 - Do not commit `node_modules/`, `dist/`, or anything under `~/.local-code-intelligence`.
 - Do not add cloud embedding APIs as the default path; local Ollama is the contract.
 - Run `npm run typecheck` and `npm run test:unit` before opening a PR.

@@ -9,8 +9,8 @@ MCP namespace: `user-local-code-intelligence`. The corpus is already embedded in
 
 ## Always do this first
 
-1. `search_codebase` (pass `max_tokens` 800–1500). Only the query is embedded locally; stored vectors retrieve snippets.
-2. `search_symbol` for a known name; `find_references` for occurrences.
+1. For a new or broad coding task, `get_task_context`. Only the query is embedded locally; stored vectors retrieve snippets.
+2. `search_symbol` for a known name; `search_codebase` for conceptual exploration; `find_references` for occurrences.
 3. `get_file_context` with `start_line`/`end_line` for the range you will edit.
 4. `get_repo_context` / `list_indexed_repos` / `index_status` for orientation.
 
@@ -20,4 +20,4 @@ MCP namespace: `user-local-code-intelligence`. The corpus is already embedded in
 - Read whole files to "see how it works"
 - Ask the cloud model to embed or index code
 
-If the workspace is a parent (e.g. Savor), `list_indexed_repos` and pass `repo`. If unindexed, run `code-intel setup --repo <path>` via Shell, then search again.
+If retrieval reports low confidence, the index is stale, or the path is unindexed, targeted filesystem search is allowed. If the workspace is a parent (e.g. Savor), `list_indexed_repos` and pass `repo`. If unindexed, run `code-intel setup --repo <path>` via Shell, then search again.
