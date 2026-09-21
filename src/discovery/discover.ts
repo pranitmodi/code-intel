@@ -26,6 +26,18 @@ function loadGitignore(repoRoot: string): string[] {
   return readFileSync(gitignorePath, 'utf-8').split('\n');
 }
 
+export function isIndexableRelativePath(repoRoot: string, relativePath: string, options: DiscoveryOptions): boolean {
+  const posixPath = toPosix(relativePath);
+  if (!posixPath || posixPath.startsWith('../') || posixPath === '..') return false;
+  const ig = ignoreFactory()
+    .add(DEFAULT_IGNORE_PATTERNS)
+    .add(loadGitignore(repoRoot))
+    .add(options.extraIgnorePatterns);
+  if (ig.ignores(posixPath)) return false;
+  if (!options.allowSensitiveFiles && ignoreFactory().add(SECRET_FILE_PATTERNS).ignores(posixPath)) return false;
+  return true;
+}
+
 /**
  * Recursively discovers candidate files under `repoRoot`, respecting
  * `.gitignore`, built-in default exclusions, user-configured extra patterns,

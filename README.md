@@ -1,29 +1,47 @@
 # code-intel
 
-AI coding agents burn tokens re-scanning your repository every turn. **code-intel** indexes the tree once with local [Ollama](https://ollama.com) or an OpenAI-compatible embedding service, stores vectors on disk in [LanceDB](https://lancedb.github.io/lancedb/), and serves targeted snippets over the [Model Context Protocol](https://modelcontextprotocol.io) so Cursor, VS Code, Claude Code, Codex, or any MCP client can search without dumping the whole codebase into context.
+[![npm](https://img.shields.io/npm/v/@pranitmodi/code-intel)](https://www.npmjs.com/package/@pranitmodi/code-intel)
+[![CI](https://github.com/pranitmodi/code-intel/actions/workflows/ci.yml/badge.svg)](https://github.com/pranitmodi/code-intel/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](package.json)
 
-Ollama is the private, local default. When an OpenAI-compatible provider is configured, code chunks and search queries are sent to that provider for embedding; embeddings and the vector database remain on disk locally. Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). MIT licensed.
+**Persistent, local-first repository context for AI coding agents.**
 
-A local-first semantic code indexing and retrieval server. It indexes a repository into a local vector database once, keeps that index incrementally in sync as files change, and exposes semantic + keyword + symbol search to AI coding agents.
+Coding agents repeatedly list, search, and read the same repository. `code-intel` indexes that knowledge once, keeps it current as files change, and gives the agent a small, ranked context package over the [Model Context Protocol](https://modelcontextprotocol.io).
 
-## What it does
+The default path uses local [Ollama](https://ollama.com) embeddings and on-disk [LanceDB](https://lancedb.github.io/lancedb/). Cursor, VS Code, Claude Code, Codex, and other MCP clients can share the same index.
 
-- Parses your repository with Tree-sitter and chunks it at structural boundaries (functions, classes, methods, interfaces, ...), not fixed character windows.
-- Embeds each chunk via local **Ollama** (default) or a configured **OpenAI-compatible** endpoint and stores vectors + metadata in a local **LanceDB** database.
-- Re-indexes incrementally: unchanged files/chunks are never re-embedded; only new or edited chunks are.
-- Serves `search_codebase`, `search_symbol`, `get_file_context`, `get_repo_context`, `find_references`, `list_indexed_repos`, and `index_status` as MCP tools over stdio, so any MCP-capable IDE/agent can query the same persistent index instead of re-scanning or re-embedding the repository itself.
+> **Measured on this repository:** task-context retrieval used **73.9% fewer estimated input tokens** than the workspace-scan baseline, with **0.96 Recall@10**, **0.84 MRR**, and **708 ms p95**. This is an eight-task TypeScript regression benchmark, not a universal cost guarantee. See [methodology and complete results](docs/BENCHMARKS.md).
 
-## Architecture
+## Why use it?
 
-```text
-Git Repo -> Discovery -> Parser/Chunker -> Hasher -> Embedding Provider -> LanceDB
-                                                                                       |
-                                                              MCP Server (stdio) <-----+
-                                                                       |
-                                                    Cursor / VS Code / Claude Code / Codex
+- **Less repeated context:** return relevant symbols and files instead of dumping the tree.
+- **Task-aware retrieval:** `get_task_context` combines semantic, keyword, symbol, path, and relationship signals.
+- **Incremental by design:** only changed chunks are embedded; unchanged vectors are reused.
+- **Local-first privacy:** Ollama is the default and no telemetry is enabled.
+- **Agent-safe fallback:** stale or low-confidence retrieval permits targeted filesystem search.
+- **Inspectable quality:** explain traces and a labeled benchmark expose ranking, misses, token budgets, and latency.
+
+## How it works
+
+```mermaid
+flowchart LR
+  repo[Repository]
+  index[Incremental structural index]
+  db[(Local LanceDB)]
+  mcp[MCP context server]
+  agent[AI coding agent]
+
+  repo -->|"parse, hash, embed changes"| index --> db
+  agent -->|"coding task"| mcp
+  mcp -->|"hybrid search and expansion"| db
+  db -->|"ranked chunks"| mcp
+  mcp -->|"token-budgeted context"| agent
 ```
 
-Each stage is an independent module (`src/discovery`, `src/parser`, `src/chunker`, `src/hashing`, `src/embeddings`, `src/vector-store`, `src/indexer`, `src/search`, `src/mcp`, `src/cli`) so the embedding provider or vector database can be swapped without touching the others.
+The write path discovers files, creates Tree-sitter symbol chunks where supported, hashes content, and embeds only changes. The read path analyzes a task, retrieves candidates, expands imports/references/tests/configuration, removes redundancy, and packs the result under a hard token budget.
+
+Read the full [architecture](docs/ARCHITECTURE.md), [benchmark methodology](docs/BENCHMARKS.md), and [security model](SECURITY.md).
 
 ## Installation
 
@@ -61,7 +79,7 @@ ollama pull nomic-embed-text   # default embedding model, ~274MB
 
 ## OpenAI-compatible embeddings
 
-Any OpenAI-compatible `/embeddings` service works: a company proxy, OpenAI, Azure, or a local gateway.
+Any compatible `/embeddings` service can be used: a hosted provider, an organization-managed gateway, or a local service. Review that provider's source-code retention and training policies before indexing private repositories.
 
 ### One-command setup
 
@@ -71,18 +89,18 @@ From the repository, run:
 code-intel wizard
 ```
 
-It first asks whether to use **local Ollama** or a **company OpenAI-compatible proxy**. If you choose the proxy, it prompts for API key (hidden in the terminal, not saved to disk), optional username, model, and endpoint, then validates, rebuilds the index, and wires Cursor. `code-intel corporate-setup` is the same flow already set to the company-proxy route.
+It first asks whether to use **local Ollama** or an **OpenAI-compatible provider**. If you choose the provider, it prompts for API key (hidden in the terminal and not saved to YAML), optional username, model, and endpoint, then validates, rebuilds the index, and wires Cursor. `code-intel corporate-setup` is an alias that starts directly on the managed-provider route.
 
-For a company-managed, non-interactive rollout:
+For a non-interactive managed rollout:
 
 ```bash
 code-intel corporate-setup --non-interactive \
-  --model Qwen3-Embedding-8B \
-  --base-url https://llm-proxy-api.ai.eng.netapp.com \
+  --model your-embedding-model \
+  --base-url https://embeddings.example.com/v1 \
   --embeddings-path /embeddings
 ```
 
-That path still requires `CODE_INTEL_EMBEDDING_API_KEY` in the environment (or `--api-key` for a one-off; it is still not written to YAML). Corporate TLS uses Node's system certificate store and never disables verification. Use a current Node release supporting `--use-system-ca`. On older/custom Node installations, set `NODE_EXTRA_CA_CERTS` to the company CA PEM file.
+That path still requires `CODE_INTEL_EMBEDDING_API_KEY` in the environment (or `--api-key` for a one-off; it is not written to YAML). Managed TLS can use Node's system certificate store without disabling verification. Use a current Node release supporting `--use-system-ca`; on older/custom installations, set `NODE_EXTRA_CA_CERTS` to the organization CA PEM file.
 
 ### Manual configuration
 
@@ -93,8 +111,8 @@ Model name, base URL, and path are all configurable. Set them once globally so e
 ```yaml
 embedding:
   provider: openai-compatible
-  model: Qwen3-Embedding-8B          # or text-embedding-3-small, nomic-embed-text, ...
-  base_url: https://llm-proxy-api.ai.eng.netapp.com
+  model: your-embedding-model
+  base_url: https://embeddings.example.com/v1
   embeddings_path: /embeddings       # use /v1/embeddings if your API lives under /v1
   batch_size: 32
   timeout_ms: 60000
@@ -105,16 +123,16 @@ You can also set a per-repo `.code-intel/config.yaml`, environment variables, or
 
 ```bash
 export CODE_INTEL_EMBEDDING_PROVIDER=openai-compatible
-export CODE_INTEL_EMBEDDING_MODEL='Qwen3-Embedding-8B'
-export CODE_INTEL_EMBEDDING_BASE_URL='https://llm-proxy-api.ai.eng.netapp.com'
+export CODE_INTEL_EMBEDDING_MODEL='your-embedding-model'
+export CODE_INTEL_EMBEDDING_BASE_URL='https://embeddings.example.com/v1'
 export CODE_INTEL_EMBEDDING_PATH='/embeddings'
 export CODE_INTEL_EMBEDDING_API_KEY='your-key'
 export CODE_INTEL_EMBEDDING_USER='your-username'   # only if the endpoint requires a user field
 
 code-intel doctor
 code-intel setup --embedding-provider openai-compatible \
-  --embedding-model Qwen3-Embedding-8B \
-  --embedding-base-url https://llm-proxy-api.ai.eng.netapp.com
+  --embedding-model your-embedding-model \
+  --embedding-base-url https://embeddings.example.com/v1
 ```
 
 Put the same `CODE_INTEL_EMBEDDING_*` variables in the MCP server environment so the IDE process can embed search queries. Keys are never read from YAML. If the repository was already indexed with another model, run `code-intel rebuild`.
@@ -188,7 +206,18 @@ Embedding knobs (also available as YAML / env) can be passed on any command:
 code-intel savings --benchmark --rate 3 --turns 15
 ```
 
-`--benchmark` runs that A/B on every indexed repo (needs the configured embedding provider and `rg`). Live MCP searches and blocked workspace Grep/Glob (from `cursor-install` hooks) append to `~/.local-code-intelligence/usage.jsonl`. Re-run `code-intel savings` after a real coding session to see session totals. Dollar figures use `--rate` as dollars per million **input** tokens (default `$3`, a Sonnet-class list price). `--turns` compounds a dump that would have stayed in the chat.
+`--benchmark` runs that A/B on every indexed repo (needs the configured embedding provider and `rg`). Live MCP searches and blocked workspace Grep/Glob (from `cursor-install` hooks) append to `~/.local-code-intelligence/usage.jsonl`. Re-run `code-intel savings` after a real coding session to see session totals.
+
+Dollar figures use `--rate` as dollars per million **input** tokens. `--turns` models a dump remaining in later turns. Both are illustrative: provider caching, client behavior, pricing, and context management determine the actual bill.
+
+The separate labeled retrieval benchmark checks whether smaller context is still relevant:
+
+```bash
+code-intel benchmark
+code-intel benchmark --format json --task known-search-codebase
+```
+
+See [Benchmarks](docs/BENCHMARKS.md) for the baseline, formulas, complete measured result, dataset ceiling, limitations, and reproduction steps.
 
 ## MCP configuration
 
@@ -211,7 +240,7 @@ Reload/trust the server when prompted, then ask Copilot Chat to use the tools (o
 
 ### Cursor
 
-The reliable setup after `npm install -g code-intel` (or `npm link` from a checkout):
+The reliable setup after `npm install -g @pranitmodi/code-intel` (or `npm link` from a checkout):
 
 ```bash
 code-intel cursor-install
@@ -228,7 +257,7 @@ The checked-in example is [examples/mcp/cursor.mcp.json](examples/mcp/cursor.mcp
 
 Note the different top-level key (`mcpServers` vs VS Code's `servers`) — this is a real difference between the two clients' config formats, not a typo.
 
-Both IDEs will then list `get_task_context`, `search_codebase`, `search_symbol`, `get_file_context`, `get_repo_context`, `find_references`, `list_indexed_repos`, and `index_status` as available tools, backed by the index you already built with `code-intel setup` — the agent never re-scans or re-embeds your repository itself.
+Both IDEs will then list `get_task_context`, `search_codebase`, `search_symbol`, `get_file_context`, `get_repo_context`, `find_references`, `list_indexed_repos`, and `index_status`. Retrieval uses the persistent index first; targeted filesystem search remains available when the index is stale, missing, or low confidence.
 
 ## Database location
 
@@ -236,10 +265,12 @@ Default: `~/.local-code-intelligence/repos/<repo-id>/{db,metadata,state.json,log
 
 ## Privacy behavior
 
-- With the default Ollama provider, source code, chunks, embeddings, and the vector database stay on this machine.
+- With the default local Ollama host, source code, chunks, embeddings, and the vector database stay on this machine. A remote Ollama host is a remote provider.
 - With an OpenAI-compatible provider, chunks and semantic search queries are sent to the configured endpoint; embeddings and LanceDB remain local.
 - No telemetry or third-party cloud API is enabled by default.
 - `.env*`, private keys, and other secret-shaped files are excluded by default (`security.allow_sensitive_files: false`); files with likely secret *values* are skipped even if their name would otherwise be allowed.
+
+Indexes contain source text. MCP configuration may contain provider credentials. Read the [security policy](SECURITY.md) before indexing private code.
 
 ## Configuration
 
@@ -304,7 +335,7 @@ ignore: []
 - Tables with 256+ chunks get an IVF-PQ ANN index (L2); smaller indexes keep brute-force kNN.
 - A single-writer PID lock file prevents two `index`/`watch` processes from corrupting the same repo's index concurrently. The `mcp` command reads the index and, by default, incrementally writes when watched files change.
 
-## Development
+## Contributing
 
 ```bash
 npm run typecheck
@@ -312,9 +343,14 @@ npm test
 npm run dev -- <command>   # run the CLI from source via tsx, no build step
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contributor workflow. `tests/fixtures/test-repo` plus `tests/integration/acceptance.test.ts` and `tests/integration/mcp.test.ts` exercise the full spec acceptance scenario end-to-end against a real local Ollama model (skipped automatically if Ollama/the model isn't available).
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), follow the [Code of Conduct](CODE_OF_CONDUCT.md), and report vulnerabilities through [SECURITY.md](SECURITY.md). `tests/fixtures/test-repo` plus the integration suite exercise the MCP path end to end against local Ollama when available.
 
-## Known gaps
+## Current limitations
 
 - Structural (Tree-sitter) chunking currently covers TypeScript/TSX, JavaScript, Python, Go, and Bash; other languages from the spec's list still get correctly tagged and indexed, just via generic text chunking rather than symbol-level chunks.
 - `find_references` is a textual occurrence scan, not full semantic reference resolution.
+- Import expansion handles relative JavaScript/TypeScript paths, root TypeScript aliases, and Python modules; it is not a compiler or package manager.
+- The file watcher runs with the MCP or `code-intel watch` process, not as a system daemon.
+- Published retrieval metrics currently come from eight labeled tasks in this repository and do not guarantee equal quality on every language or monorepo.
+
+See the [architecture limitations](docs/ARCHITECTURE.md#current-limitations), [changelog](CHANGELOG.md), and [open issues](https://github.com/pranitmodi/code-intel/issues).

@@ -40,10 +40,14 @@ import { formatSearchExplain } from '../retrieval/explain.js';
 import { formatContextPackage, getTaskContext } from '../retrieval/taskContext.js';
 import { runRetrievalBenchmark } from '../benchmark/runner.js';
 
+const packageVersion = (
+  JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as { version: string }
+).version;
 const program = new Command();
 program
   .name('code-intel')
   .description('Local-first semantic code indexing and retrieval, exposed to AI agents via MCP.')
+  .version(packageVersion)
   .option('--repo <path>', 'repository root (defaults to the current directory) — use this when a host spawns the process with an unrelated cwd')
   .option('--embedding-provider <name>', 'ollama or openai-compatible')
   .option('--embedding-model <name>', 'embedding model id (e.g. nomic-embed-text or Qwen3-Embedding-8B)')
@@ -679,10 +683,15 @@ program
       );
     }
 
-    if (status.stale && status.filesDiscoverable != null) {
-      console.log(
-        `\nStale index: ${status.filesDiscoverable} files currently discoverable vs ${status.filesIndexed} at last index — run \`code-intel index\`.`
-      );
+    if (status.stale) {
+      const countHint =
+        status.filesDiscoverable != null
+          ? `${status.filesDiscoverable} files currently discoverable vs ${status.filesIndexed} at last index`
+          : 'working-tree content no longer matches the stored sample';
+      console.log(`\nStale index: ${countHint} — run \`code-intel index\`.`);
+    }
+    if (status.watch?.lastError) {
+      console.log(`\nWatch: last error at ${status.watch.lastErrorAt ?? 'unknown'}: ${status.watch.lastError}`);
     }
   });
 

@@ -5,8 +5,10 @@ import { resolveRepoPaths } from '../config/paths.js';
 import { discoverFiles } from '../discovery/discover.js';
 import { getDirectorySizeBytes } from '../utils/dirSize.js';
 import { computeRepoId } from '../utils/repo-id.js';
+import { isContentSampleStale } from './freshness.js';
 import { indexedChildrenOf, listIndexedRepos, type RegistryEntry } from './registry.js';
 import { readProgress, readState, type IndexProgress } from './state.js';
+import { readWatchStatus, type WatchStatus } from './watchStatus.js';
 
 export const INDEX_HINT = 'Not indexed yet — run `code-intel setup --repo <path>` (or `code-intel index --repo <path>`).';
 
@@ -24,6 +26,7 @@ export interface IndexStatus {
   indexLocation: string | null;
   databaseBytes: number | null;
   progress?: IndexProgress & { active: boolean };
+  watch?: WatchStatus & { skipped?: boolean };
   message?: string;
   indexedChildren?: RegistryEntry[];
 }
@@ -93,9 +96,11 @@ export async function getIndexStatus(repoRoot: string): Promise<IndexStatus> {
       extraIgnorePatterns: config.ignore
     });
     filesDiscoverable = discovered.length;
-    stale = discovered.length !== (state.filesDiscovered ?? state.filesIndexed);
+    const countStale = discovered.length !== (state.filesDiscovered ?? state.filesIndexed);
+    stale = countStale || isContentSampleStale(repoRoot, state);
   }
 
+  const watch = readWatchStatus(paths.watchStatusFile);
   return {
     repoRoot,
     repoId,
@@ -109,7 +114,8 @@ export async function getIndexStatus(repoRoot: string): Promise<IndexStatus> {
     embeddingModel: state.embeddingModel,
     indexLocation: paths.indexDir,
     databaseBytes: getDirectorySizeBytes(paths.dbDir),
-    progress
+    progress,
+    watch: watch ? { ...watch, skipped: Boolean(watch.lastError) } : undefined
   };
 }
 

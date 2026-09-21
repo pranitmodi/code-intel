@@ -8,7 +8,8 @@ import type { LanceVectorStore } from '../vector-store/LanceVectorStore.js';
 import { grantFilesystemFallback } from './fallback.js';
 import { hybridSearch } from './hybrid.js';
 import { analyzeQuery } from './intent.js';
-import { candidateImportPaths } from './resolveImport.js';
+import { confidenceFor } from './confidence.js';
+import { candidateImportPaths, loadTsPathAliases } from './resolveImport.js';
 import { candidateFromRecord, pathScore } from './score.js';
 import { mergeCandidates, selectCandidates } from './select.js';
 import type {
@@ -90,27 +91,6 @@ function addCandidate(
   map.set(incoming.id, existing ? mergeCandidates(existing, incoming) : incoming);
 }
 
-function confidenceFor(
-  selected: RetrievalCandidate[],
-  threshold: number,
-  stale?: boolean | null
-): RetrievalConfidence {
-  if (stale) {
-    return { score: 0.2, reason: 'Index is stale relative to the working tree.' };
-  }
-  if (selected.length === 0) {
-    return { score: 0, reason: 'Low-confidence retrieval. Recommended fallback: targeted repository search.' };
-  }
-  const top = selected[0]!.score.total;
-  if (top < threshold) {
-    return {
-      score: top,
-      reason: 'Low-confidence retrieval. Recommended fallback: targeted repository search.'
-    };
-  }
-  return { score: top, reason: 'Top results exceeded the confidence threshold.' };
-}
-
 function packageFromSelected(
   query: string,
   selected: RetrievalCandidate[],
@@ -182,6 +162,7 @@ export async function getTaskContext(
   const seedLimit = Math.min(retrieval.seedResults, caps.chunks);
   const queryLower = task.toLowerCase();
   const started = Date.now();
+  const aliases = loadTsPathAliases(app.repoRoot);
 
   const seed = await hybridSearch(task, app.vectorStore, app.embeddingProvider, app.config.search, {
     limit: seedLimit,
@@ -306,9 +287,9 @@ export async function getTaskContext(
     hops += 1;
     const next: RetrievalCandidate[] = [];
     for (const seedChunk of frontier) {
-      const relativeImports = seedChunk.extra.imports.filter((imp) => imp.startsWith('.'));
-      for (const imp of relativeImports.slice(0, 6)) {
-        const paths = candidateImportPaths(seedChunk.file, imp);
+      const importSpecs = seedChunk.extra.imports.filter((imp) => imp.startsWith('.') || !imp.startsWith('http'));
+      for (const imp of importSpecs.slice(0, 8)) {
+        const paths = candidateImportPaths(seedChunk.file, imp, aliases);
         if (paths.length === 0) continue;
         const rows = await queryFilesExact(app.vectorStore, paths, 8);
         for (const record of rows) {
@@ -416,7 +397,10 @@ export async function getTaskContext(
     expansionTopK: 5
   });
 
-  const confidence = confidenceFor(packed.selected, retrieval.confidenceThreshold, options.stale);
+  const confidence = confidenceFor(packed.selected, retrieval.confidenceThreshold, {
+    stale: options.stale,
+    query: task
+  });
   if (
     app.config.retrieval.allowFallbackAfterFailedRetrieval &&
     confidence.score < retrieval.confidenceThreshold
