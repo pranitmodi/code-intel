@@ -4,6 +4,13 @@ import { buildChunkSchema, CHUNKS_TABLE, type ChunkRecord, type ChunkSearchResul
 
 const logger = createLogger('vector-store');
 
+/**
+ * Seconds between checks for versions written by other processes. Without it a
+ * handle stays on the version it opened, so an MCP server keeps serving stale
+ * results after another editor's watcher or `code-intel index` updates the table.
+ */
+const READ_CONSISTENCY_INTERVAL_SECONDS = 1;
+
 export interface FileChunkSummary {
   id: string;
   contentHash: string;
@@ -26,7 +33,9 @@ export class LanceVectorStore {
   ) {}
 
   static async open(dbDir: string, embeddingDimensions: number): Promise<LanceVectorStore> {
-    const connection = await lancedb.connect(dbDir);
+    const connection = await lancedb.connect(dbDir, {
+      readConsistencyInterval: READ_CONSISTENCY_INTERVAL_SECONDS
+    });
     const table = await LanceVectorStore.openOrCreateTable(connection, embeddingDimensions);
     const store = new LanceVectorStore(connection, table);
     await store.ensureIndices();
@@ -67,6 +76,15 @@ export class LanceVectorStore {
         error: error instanceof Error ? error.message : String(error)
       });
     }
+  }
+
+  /**
+   * Move to the newest table version. Call under the index lock before a write
+   * pass: a merge planned from an older version can insert rows another process
+   * already wrote, duplicating chunk ids.
+   */
+  async syncLatest(): Promise<void> {
+    await this.table.checkoutLatest();
   }
 
   /** Upsert by `id` — matched rows are fully replaced (new embedding/content/lines), unmatched rows are inserted. */

@@ -1,14 +1,8 @@
-export const MCP_SERVER_INSTRUCTIONS = `This server is the primary code-discovery path for Cursor on this machine.
+export const MCP_SERVER_INSTRUCTIONS = `Local code index for repositories on this machine. Code is already embedded and stored locally; only your query is embedded, and results come back ranked and trimmed to a token budget. Use it before scanning files.
 
-Corpus embeddings already live in local LanceDB (Ollama nomic-embed-text). Only the search query is embedded locally; stored vectors retrieve snippets — never re-index or re-embed the tree, and never send vectors to the chat model.
+1. get_task_context for a new or broad task.
+2. search_symbol for a known name, search_codebase for a concept, find_references for occurrences.
+3. get_file_context with start_line/end_line before editing.
 
-Required order:
-1. For a new or broad coding task, use get_task_context.
-2. For a known symbol, use search_symbol.
-3. For conceptual exploration, use search_codebase.
-4. For call-site analysis, use find_references.
-5. Use get_file_context for exact source ranges.
-6. Avoid workspace-wide Grep/Glob unless retrieval returned low confidence, the index is stale/unindexed, or those tools genuinely cannot answer.
-
-If the workspace is a parent folder, call list_indexed_repos and pass repo (path, id, or name). If nothing is indexed, tell the user to run: code-intel setup --repo <path>.
+Fall back to targeted file search only when a result reports low confidence or a stale or unindexed repo. For a parent folder of several repos, call list_indexed_repos and pass repo. If nothing is indexed, ask the user to run: code-intel setup --repo <path>
 `;

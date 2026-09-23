@@ -12,11 +12,16 @@ import { MCP_SERVER_INSTRUCTIONS } from '../cursor/mcpInstructions.js';
 import { createMcpRuntime, type McpRuntime, type ResolveOk } from './runtime.js';
 import { startWorkspaceWatchers } from './watchOnStart.js';
 import { recordMcpRetrieval } from '../usage/record.js';
+import { serializeToolResult, taskContextPayload } from './payload.js';
 import { getIndexStatus } from '../indexer/status.js';
 import { recoverySteps } from '../cli/formatCliFailure.js';
+import { PACKAGE_VERSION } from '../version.js';
 
-function textResult(value: unknown) {
-  return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
+/** How long an in-flight index batch may delay exit after the client disconnects. */
+const SHUTDOWN_GRACE_MS = 5_000;
+
+function textResult(value: unknown, text = serializeToolResult(value)) {
+  return { content: [{ type: 'text' as const, text }] };
 }
 
 const repoField = z
@@ -43,15 +48,16 @@ async function withRepo(
   }
   try {
     const value = await fn(resolved.context);
+    const text = serializeToolResult(value);
     if (usageTool) {
       recordMcpRetrieval({
         tool: usageTool,
         repo: resolved.context.repoRoot,
-        payloadText: JSON.stringify(value),
+        payloadText: text,
         latencyMs: Date.now() - started
       });
     }
-    return textResult(value);
+    return textResult(value, text);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return textResult({
@@ -65,7 +71,7 @@ async function withRepo(
 /** Exposes the local index to any MCP client (Cursor, VS Code, Claude Code, Codex, ...) — read-only (spec section 20/22). */
 export function buildServer(runtime: McpRuntime): McpServer {
   const server = new McpServer(
-    { name: 'local-code-intelligence', version: '0.1.0' },
+    { name: 'local-code-intelligence', version: PACKAGE_VERSION },
     { instructions: MCP_SERVER_INSTRUCTIONS }
   );
 
@@ -204,8 +210,7 @@ export function buildServer(runtime: McpRuntime): McpServer {
             mode,
             stale: status.stale
           });
-          const { trace: _trace, ...rest } = pkg;
-          return { repo: context.repoRoot, ...rest };
+          return taskContextPayload(context.repoRoot, pkg);
         },
         'get_task_context'
       )
@@ -249,21 +254,31 @@ export async function startMcpServer(
     `local-code-intelligence MCP server running on stdio (repo: ${label}${watchEnabled ? ', watch on' : ''})`
   );
 
-  if (watchEnabled) {
-    void startWorkspaceWatchers(runtime)
-      .then((stop) => {
-        const shutdown = (): void => {
-          void stop();
-        };
-        process.once('SIGINT', shutdown);
-        process.once('SIGTERM', shutdown);
-      })
-      .catch((error) => {
+  const watchers: Promise<(() => Promise<void>) | undefined> = watchEnabled
+    ? startWorkspaceWatchers(runtime).catch((error: unknown) => {
         console.error(
           `[WATCH] failed to start: ${error instanceof Error ? error.message : String(error)}`
         );
-      });
-  }
+        return undefined;
+      })
+    : Promise.resolve(undefined);
 
-  serveStdio(() => server);
+  const connection = serveStdio(() => server);
+
+  // Watchers keep the event loop alive, so the process must exit explicitly
+  // once the client is gone; editors that crash only close stdin.
+  let exiting = false;
+  const shutdown = (): void => {
+    if (exiting) return;
+    exiting = true;
+    setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref();
+    void watchers
+      .then((stop) => stop?.())
+      .then(() => connection.close())
+      .catch(() => undefined)
+      .finally(() => process.exit(0));
+  };
+  process.stdin.once('end', shutdown);
+  process.stdin.once('close', shutdown);
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.once(signal, shutdown);
 }

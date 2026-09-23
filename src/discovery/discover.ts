@@ -39,12 +39,17 @@ export function isIndexableRelativePath(repoRoot: string, relativePath: string, 
 }
 
 /**
- * Recursively discovers candidate files under `repoRoot`, respecting
- * `.gitignore`, built-in default exclusions, user-configured extra patterns,
- * and (unless `allowSensitiveFiles`) secret-file patterns. Symlinks are
- * skipped to avoid escaping the repo root or following cycles.
+ * Recursively discovers candidate files under `repoRoot` (or only under the
+ * repo-relative directory `under`), respecting `.gitignore`, built-in default
+ * exclusions, user-configured extra patterns, and (unless `allowSensitiveFiles`)
+ * secret-file patterns. Symlinks are skipped to avoid escaping the repo root
+ * or following cycles.
  */
-export async function discoverFiles(repoRoot: string, options: DiscoveryOptions): Promise<DiscoveredFile[]> {
+export async function discoverFiles(
+  repoRoot: string,
+  options: DiscoveryOptions,
+  under?: string
+): Promise<DiscoveredFile[]> {
   const ig = ignoreFactory()
     .add(DEFAULT_IGNORE_PATTERNS)
     .add(loadGitignore(repoRoot))
@@ -82,6 +87,16 @@ export async function discoverFiles(repoRoot: string, options: DiscoveryOptions)
 
       results.push({ absolutePath, relativePath });
     }
+  }
+
+  if (under) {
+    const start = toPosix(under).replace(/\/+$/, '');
+    if (!start || start.startsWith('../') || start === '..') return results;
+    if (ig.ignores(`${start}/`)) return results;
+    const absoluteStart = join(repoRoot, ...start.split('/'));
+    if (isGitRoot(absoluteStart)) return results;
+    await walk(absoluteStart);
+    return results;
   }
 
   await walk(repoRoot);

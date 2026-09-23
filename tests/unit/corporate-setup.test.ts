@@ -92,10 +92,10 @@ describe('corporate setup', () => {
     const questions: string[] = [];
     const credentials = await resolveCorporateCredentials({}, async (question) => {
       questions.push(question);
-      return question.startsWith('API key') ? 'secret-from-prompt' : 'pranitm';
+      return question.startsWith('API key') ? 'secret-from-prompt' : 'dev-user';
     });
     expect(questions[0]).toMatch(/API key/);
-    expect(credentials).toEqual({ apiKey: 'secret-from-prompt', user: 'pranitm' });
+    expect(credentials).toEqual({ apiKey: 'secret-from-prompt', user: 'dev-user' });
   });
 
   it('writes an Ollama config without credentials', async () => {

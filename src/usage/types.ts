@@ -22,8 +22,8 @@ export interface BenchmarkQuery {
   naiveAgentTokens: number;
   searchMs: number;
   resultCount: number;
+  /** Exact tokens of the index tool's result for this query (never capped). */
   searchTokens: number;
-  searchTokensCapped: number;
   tokensSavedPerTurn: number;
   pctSaved: number;
 }
@@ -42,7 +42,8 @@ export interface BenchmarkFile {
   ranAt: string;
   charsPerToken: number;
   maxReadFiles: number;
-  searchTokenCap: number;
+  /** MCP tool measured on the index side; absent in files written before 0.3.0. */
+  indexTool?: string;
   repos: BenchmarkRepo[];
 }
 

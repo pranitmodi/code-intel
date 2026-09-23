@@ -1,6 +1,6 @@
 # code-intel: Next-Generation Agent Context Architecture
 
-> Historical implementation specification for the task-context work introduced in v0.2.0. Some acceptance items are now implemented and some remain future work. See the maintained [architecture](docs/ARCHITECTURE.md), [benchmarks](docs/BENCHMARKS.md), and [changelog](CHANGELOG.md) for current behavior.
+> Historical implementation specification for the task-context work introduced in v0.2.0. Some acceptance items are now implemented and some remain future work. See the maintained [architecture](../ARCHITECTURE.md), [benchmarks](../BENCHMARKS.md), and [changelog](../../CHANGELOG.md) for current behavior.
 
 ## Purpose
 

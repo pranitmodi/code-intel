@@ -39,7 +39,7 @@ export function summarizeUsage(
         ranAt: benchmark.ranAt,
         queries: n,
         avgNaiveTokens: Math.round(avg((q) => q.naiveAgentTokens)),
-        avgSearchTokens: Math.round(avg((q) => q.searchTokensCapped)),
+        avgSearchTokens: Math.round(avg((q) => q.searchTokens)),
         avgSavedTokens: Math.round(avg((q) => q.tokensSavedPerTurn)),
         avgPctSaved: Math.round(avg((q) => q.pctSaved) * 10) / 10,
         avgSearchMs: Math.round(avg((q) => q.searchMs)),
@@ -85,7 +85,7 @@ export function formatSavingsReport(report: SavingsReport): string {
       `  Naive dump ${formatTokens(b.avgNaiveTokens)} tok  vs  index ${formatTokens(b.avgSearchTokens)} tok  →  ${formatTokens(b.avgSavedTokens)} tok saved/turn (${b.avgPctSaved}%)`
     );
     lines.push(
-      `  Tool wall-clock: Grep ${b.avgGrepMs}ms, search ~${b.avgSearchMs}ms (Ollama query embed). The $ savings is model input, not disk I/O.`
+      `  Tool wall-clock: Grep ${b.avgGrepMs}ms, get_task_context ~${b.avgSearchMs}ms (includes embedding the query). The $ savings is model input, not disk I/O.`
     );
     for (const repo of b.repos) {
       lines.push(

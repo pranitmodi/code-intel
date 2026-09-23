@@ -4,6 +4,8 @@ export interface SelectOptions {
   limit: number;
   maxTokens?: number;
   minScore?: number;
+  /** Like minScore, but exact symbol/identifier/file-name matches are exempt. */
+  minOrganicScore?: number;
   maxChunksPerFile: number;
   maxChunksPerSymbol: number;
   /** Prevent relationship expansion from crowding direct hits out of the first file slots. */
@@ -21,6 +23,22 @@ function symbolKey(candidate: RetrievalCandidate): string {
   return (candidate.symbol ?? `${candidate.file}:${candidate.startLine}`).toLowerCase();
 }
 
+/** Word-set Jaccard at or above this means the chunk repeats one already selected. */
+const DUPLICATE_SIMILARITY = 0.8;
+/** Short chunks share vocabulary by accident, so only compare chunks with this many distinct words. */
+const DUPLICATE_MIN_WORDS = 12;
+
+function distinctWords(content: string): Set<string> {
+  return new Set(content.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? []);
+}
+
+function similarity(a: Set<string>, b: Set<string>): number {
+  let shared = 0;
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  for (const word of small) if (large.has(word)) shared += 1;
+  return shared / (a.size + b.size - shared);
+}
+
 /**
  * Ranked greedy pack: keep the highest-value remaining candidate that fits
  * diversity caps and the token budget. Always keeps the first accepted chunk
@@ -35,6 +53,7 @@ export function selectCandidates(
   const selected: RetrievalCandidate[] = [];
   const discarded: SelectResult['discarded'] = [];
   const expansionOnlyFiles = new Set<string>();
+  const selectedWords: Set<string>[] = [];
   let estimatedTokens = 0;
   const minScore = options.minScore ?? 0;
 
@@ -43,7 +62,10 @@ export function selectCandidates(
       discarded.push({ id: candidate.id, file: candidate.file, reason: 'limit' });
       continue;
     }
-    if (candidate.score.total < minScore) {
+    if (
+      candidate.score.total < minScore ||
+      (!candidate.exactFloor && candidate.score.total < (options.minOrganicScore ?? 0))
+    ) {
       discarded.push({ id: candidate.id, file: candidate.file, reason: 'min_score' });
       continue;
     }
@@ -80,8 +102,17 @@ export function selectCandidates(
       discarded.push({ id: candidate.id, file: candidate.file, reason: 'token_budget' });
       continue;
     }
+    const words = distinctWords(candidate.content);
+    if (
+      words.size >= DUPLICATE_MIN_WORDS &&
+      selectedWords.some((other) => other.size >= DUPLICATE_MIN_WORDS && similarity(words, other) >= DUPLICATE_SIMILARITY)
+    ) {
+      discarded.push({ id: candidate.id, file: candidate.file, reason: 'duplicate' });
+      continue;
+    }
 
     selected.push(candidate);
+    selectedWords.push(words);
     estimatedTokens += candidate.estimatedTokens;
     perFile.set(candidate.file, fileCount + 1);
     perSymbol.set(key, symbolCount + 1);
@@ -91,13 +122,21 @@ export function selectCandidates(
   return { selected, discarded, estimatedTokens };
 }
 
+/**
+ * Same chunk found by several retrievers keeps the stronger score rather than
+ * a sum: adding full-text (BM25) evidence to vector similarity lifted prose and
+ * test chunks over the code on natural-language tasks in the labeled benchmark.
+ */
 export function mergeCandidates(existing: RetrievalCandidate, incoming: RetrievalCandidate): RetrievalCandidate {
   const sources = [...new Set([...existing.sources, ...incoming.sources])];
-  const score = existing.score.total >= incoming.score.total ? existing.score : incoming.score;
+  const winner = incoming.score.total > existing.score.total ? incoming : existing;
+  const exactFloor = Math.max(existing.exactFloor ?? 0, incoming.exactFloor ?? 0);
+  const { exactFloor: _floor, ...base } = existing;
   return {
-    ...existing,
+    ...base,
     sources,
-    score,
+    score: winner.score,
+    ...(exactFloor > 0 ? { exactFloor } : {}),
     extra: {
       imports: [...new Set([...existing.extra.imports, ...incoming.extra.imports])],
       exports: [...new Set([...existing.extra.exports, ...incoming.extra.exports])],
@@ -107,6 +146,6 @@ export function mergeCandidates(existing: RetrievalCandidate, incoming: Retrieva
       isTest: existing.extra.isTest || incoming.extra.isTest,
       isConfig: existing.extra.isConfig || incoming.extra.isConfig
     },
-    reason: existing.score.total >= incoming.score.total ? existing.reason : incoming.reason
+    reason: winner.reason
   };
 }

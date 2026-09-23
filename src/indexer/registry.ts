@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve, sep } from 'node:path';
 import { computeRepoId } from '../utils/repo-id.js';
 import { readState } from './state.js';
@@ -126,6 +126,28 @@ export function resolveRepoRef(databasePath: string, ref: string, defaultRepoRoo
   }
 
   return repos.find((repo) => repo.path.endsWith(`${sep}${trimmed}`) || repo.path.endsWith(`/${trimmed}`));
+}
+
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+/** Containment on symlink-resolved paths, matching how repo ids are derived. */
+export function isSameOrInside(path: string, root: string): boolean {
+  const base = canonicalPath(root);
+  const target = canonicalPath(path);
+  return target === base || target.startsWith(base.endsWith(sep) ? base : base + sep);
+}
+
+/** The deepest of `repoPaths` that equals or contains `path`, e.g. the repo owning an opened subfolder. */
+export function containingRepoPath(path: string, repoPaths: string[]): string | undefined {
+  return repoPaths
+    .filter((repoPath) => Boolean(repoPath) && isSameOrInside(path, repoPath))
+    .sort((a, b) => b.length - a.length)[0];
 }
 
 export function indexedChildrenOf(databasePath: string, parentRoot: string): RegistryEntry[] {

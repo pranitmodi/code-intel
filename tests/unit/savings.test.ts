@@ -63,7 +63,7 @@ describe('usage report', () => {
       ranAt: '2026-09-07T16:00:00.000Z',
       charsPerToken: 4,
       maxReadFiles: 12,
-      searchTokenCap: 1200,
+      indexTool: 'get_task_context',
       repos: [
         {
           name: 'demo-app',
@@ -85,8 +85,7 @@ describe('usage report', () => {
               naiveAgentTokens: 16_000,
               searchMs: 900,
               resultCount: 8,
-              searchTokens: 2000,
-              searchTokensCapped: 1200,
+              searchTokens: 1200,
               tokensSavedPerTurn: 14_800,
               pctSaved: 92.5
             }

@@ -34,6 +34,24 @@ export interface IndexerDeps {
   paths: RepoPaths;
 }
 
+/**
+ * A directory moved or deleted as a whole arrives as one event for the
+ * directory itself, so expand it to the indexed files beneath it.
+ */
+export function expandDeletedPaths(deletedPaths: string[], indexedPaths: Map<string, string>): string[] {
+  const expanded = new Set<string>();
+  for (const path of deletedPaths) {
+    if (!path) continue;
+    expanded.add(path);
+    if (indexedPaths.has(path)) continue;
+    const prefix = `${path.replace(/\/+$/, '')}/`;
+    for (const indexed of indexedPaths.keys()) {
+      if (indexed.startsWith(prefix)) expanded.add(indexed);
+    }
+  }
+  return [...expanded];
+}
+
 export interface IndexSummary {
   filesDiscovered: number;
   filesIndexed: number;
@@ -57,6 +75,7 @@ export class Indexer {
     const started = Date.now();
     const release = acquireLock(this.deps.paths.lockFile);
     try {
+      await this.deps.vectorStore.syncLatest();
       return await this.runUnlocked(started);
     } finally {
       release();
@@ -156,6 +175,7 @@ export class Indexer {
     const release = acquireLock(this.deps.paths.lockFile);
     try {
       const { repoRoot, vectorStore } = this.deps;
+      await vectorStore.syncLatest();
       const previousHashes = await vectorStore.getAllFileHashes();
       const previous = readState(this.deps.paths.stateFile);
       const removedHashToPath = new Map<string, string>();
@@ -173,7 +193,7 @@ export class Indexer {
         durationMs: 0
       };
 
-      const uniqueDeletes = [...new Set(deletedPaths.filter(Boolean))];
+      const uniqueDeletes = expandDeletedPaths(deletedPaths, previousHashes);
       for (const relativePath of uniqueDeletes) {
         await vectorStore.deleteByFile(relativePath);
         summary.filesDeleted++;

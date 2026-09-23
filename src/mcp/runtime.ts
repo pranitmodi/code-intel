@@ -8,7 +8,9 @@ import { LanceVectorStore } from '../vector-store/LanceVectorStore.js';
 import { computeRepoId } from '../utils/repo-id.js';
 import { resolveRepoPaths } from '../config/paths.js';
 import {
+  containingRepoPath,
   indexedChildrenOf,
+  isSameOrInside,
   listIndexedRepos,
   resolveRepoRef,
   type RegistryEntry
@@ -22,6 +24,8 @@ export interface McpRuntime {
   resolve(repo?: string): Promise<ResolveOk | ResolveErr>;
   listRepos(): Promise<Array<RegistryEntry & { stale: boolean | null }>>;
   status(repo?: string): Promise<unknown>;
+  /** Drop a cached open index, e.g. after the repo was cleaned or rebuilt elsewhere. */
+  evict(repoRoot: string): void;
 }
 
 export interface ResolveOk {
@@ -91,6 +95,17 @@ export async function createMcpRuntime(defaultRepoRoot?: string): Promise<McpRun
     };
   }
 
+  /**
+   * What a call without `repo` targets: the workspace itself when it is indexed
+   * or is a parent of indexed repos, otherwise the indexed repo containing it
+   * (an editor opened on a subfolder of an indexed repository).
+   */
+  function defaultTarget(workspace: string): string {
+    const indexed = listIndexedRepos(config.database.path).map((repo) => repo.path);
+    if (indexed.some((path) => isSameOrInside(path, workspace))) return workspace;
+    return containingRepoPath(workspace, indexed) ?? workspace;
+  }
+
   function resolveFailure(repoRoot: string, error: unknown): ResolveErr {
     if (error instanceof Error && error.message !== 'not indexed') {
       return notIndexed(repoRoot, { message: error.message });
@@ -135,12 +150,16 @@ export async function createMcpRuntime(defaultRepoRoot?: string): Promise<McpRun
         };
       }
 
+      const target = defaultTarget(resolvedDefault);
       try {
-        const context = await cachedOpen(resolvedDefault);
+        const context = await cachedOpen(target);
         return { ok: true, context };
       } catch (error) {
-        return resolveFailure(resolvedDefault, error);
+        return resolveFailure(target, error);
       }
+    },
+    evict(repoRoot) {
+      cache.delete(computeRepoId(repoRoot));
     },
     listRepos() {
       return listIndexedReposWithStale(config.database.path);
@@ -165,7 +184,7 @@ export async function createMcpRuntime(defaultRepoRoot?: string): Promise<McpRun
           repos: listIndexedRepos(config.database.path)
         };
       }
-      return getIndexStatus(resolvedDefault);
+      return getIndexStatus(defaultTarget(resolvedDefault));
     }
   };
 }

@@ -1,27 +1,19 @@
 ---
 name: local-code-intel
 description: >-
-  Routes codebase search, symbol lookup, and repo orientation through the
-  local-code-intelligence MCP (LanceDB + local Ollama embeddings). Use whenever
-  finding code, exploring a repository, indexing, or answering where/how
-  something works. Never Grep/Glob/Task-explore first and never re-embed the corpus.
+  Find code, symbols, and repository context through the local-code-intelligence
+  MCP server (a local, always-current index) instead of Grep/Glob or reading whole
+  files. Use when locating code, exploring a repository, or answering where or how
+  something works.
 ---
 
 # Local code intelligence
 
-Corpus embeddings already live in local LanceDB. Ollama (`nomic-embed-text`) embeds **only the search query**. Retrieved snippets go to the chat model — not vectors, not the whole tree.
+MCP namespace: `user-local-code-intelligence`. Only the query is embedded; results are ranked snippets within a token budget.
 
-## MCP namespace
+1. `get_task_context` for a new or broad task (`repo` picks a child repo; `mode` `minimal` for a quick look, `deep` for cross-cutting work).
+2. `search_symbol` for a known name, `search_codebase` for a concept (`max_tokens` 800–1500), `find_references` for occurrences.
+3. `get_file_context` with a line range for the code you will change.
+4. Grep/Glob/Read a specific file or directory only after these miss or report low confidence or a stale or unindexed repo.
 
-`user-local-code-intelligence`
-
-## Required order
-
-1. For a new or broad coding task, use `get_task_context` (optional `repo` for a child of a parent workspace).
-2. For a known symbol, use `search_symbol`.
-3. For conceptual exploration, use `search_codebase` with `max_tokens` 800–1500.
-4. For call-site analysis, use `find_references`.
-5. Use `get_file_context` with a line range for the hit you will change.
-6. Grep/Glob/Read only after those miss, after a low-confidence retrieval, or when the index is stale/unindexed — and only against a specific file or subdirectory.
-
-If `index_status` says unindexed, run `code-intel setup --repo <path>` via Shell, then search again.
+If `index_status` reports the repo unindexed, run `code-intel setup --repo <path>` and retry.

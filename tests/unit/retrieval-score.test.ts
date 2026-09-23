@@ -86,6 +86,48 @@ describe('retrieval scoring', () => {
     expect(pathScore('src/unrelated.ts', 'authentication middleware')).toBe(0);
   });
 
+  it('only treats a file as named when the query really names it', () => {
+    expect(basenameMatchScore('src/retrieval/hybrid.ts', 'refactor src/retrieval/hybrid.ts')).toBe(1);
+    expect(basenameMatchScore('src/retrieval/taskContext.ts', 'rate limit get_task_context')).toBe(1);
+    expect(basenameMatchScore('src/cursor/treeScanPolicy.ts', 'the tree scan policy')).toBe(1);
+    const byWords = basenameMatchScore('src/cursor/skill.ts', 'update the cursor skill instructions');
+    expect(byWords).toBeGreaterThan(0);
+    expect(byWords).toBeLessThan(1);
+    expect(basenameMatchScore('src/cursor/mcpInstructions.ts', 'MCP responses and skill instructions')).toBe(byWords);
+
+    expect(basenameMatchScore('src/discovery/discover.ts', 'fix discoverable file counts')).toBe(0);
+    expect(basenameMatchScore('src/cli/index.ts', 'fix stale index detection')).toBe(0);
+    expect(basenameMatchScore('src/types.ts', 'which types are exported')).toBe(0);
+    expect(basenameMatchScore('src/context.ts', 'rate limit get_task_context')).toBe(0);
+    expect(basenameMatchScore('examples/mcp/cursor.mcp.json', 'add ids to MCP responses in Cursor')).toBe(0);
+    expect(basenameMatchScore('src/cursor/mcpInstructions.ts', 'add ids to MCP responses in Cursor instructions')).toBe(byWords);
+  });
+
+  it('matches symbols as whole query words', () => {
+    expect(symbolMatchScore({ symbol_name: 'run', parent_symbol: null }, 'running the indexer')).toBe(0);
+    expect(symbolMatchScore({ symbol_name: 'run', parent_symbol: null }, 'where is run defined')).toBe(1);
+    expect(symbolMatchScore({ symbol_name: 'getTaskContext', parent_symbol: null }, 'wrap get_task_context')).toBe(1);
+    expect(symbolMatchScore({ symbol_name: 'search', parent_symbol: null }, 'where is searchcodebase')).toBe(0);
+  });
+
+  it('down-weights prose for code tasks and withholds exact-match floors from it', () => {
+    const doc = record({ file_path: 'docs/GUIDE.md', symbol_name: 'searchCodebase', symbol_type: 'heading' });
+    const signals = { semantic: 0.8, keyword: 0.5, sources: ['semantic' as const], reason: 'semantic similarity' };
+    const codeTask = candidateFromRecord(doc, signals, weights, 'where is searchcodebase implemented');
+    const docTask = candidateFromRecord(doc, signals, weights, 'update the searchcodebase docs');
+    expect(codeTask.exactFloor).toBeUndefined();
+    expect(codeTask.score.total).toBeLessThan(docTask.score.total);
+    expect(docTask.exactFloor).toBe(0.95);
+
+    const identifier = candidateFromRecord(
+      doc,
+      { ...signals, exactIdentifier: true, reason: 'exact identifier occurrence: get_task_context' },
+      weights,
+      'add rate limiting around get_task_context'
+    );
+    expect(identifier.score.total).toBeLessThan(0.82);
+  });
+
   it('ranks exact symbols above generic semantic neighbors', () => {
     const exact = candidateFromRecord(
       record(),

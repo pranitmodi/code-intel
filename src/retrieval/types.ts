@@ -28,6 +28,8 @@ export interface RetrievalCandidate {
   extra: ChunkExtraMetadata;
   sources: CandidateSource[];
   score: RetrievalScore;
+  /** Minimum total guaranteed by an exact symbol, identifier, or file-name match; absent for organic hits. */
+  exactFloor?: number;
   estimatedTokens: number;
   reason: string;
 }

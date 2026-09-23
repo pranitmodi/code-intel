@@ -19,6 +19,7 @@ import { createEmbeddingProvider } from '../embeddings/createEmbeddingProvider.j
 import { loadConfig, type EmbeddingConfigOverrides, type LoadConfigOptions } from '../config/load.js';
 import { resolveRepoPaths } from '../config/paths.js';
 import { installCursorIntegration } from '../cursor/install.js';
+import { installVscodeIntegration, type VscodeInstallScope } from '../vscode/install.js';
 import { resolveIndexRoots } from '../discovery/gitRoots.js';
 import { computeRepoId } from '../utils/repo-id.js';
 import { removeRegistryEntry } from '../indexer/registry.js';
@@ -39,15 +40,13 @@ import { readBenchmark, readUsageEvents } from '../usage/store.js';
 import { formatSearchExplain } from '../retrieval/explain.js';
 import { formatContextPackage, getTaskContext } from '../retrieval/taskContext.js';
 import { runRetrievalBenchmark } from '../benchmark/runner.js';
+import { PACKAGE_VERSION } from '../version.js';
 
-const packageVersion = (
-  JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as { version: string }
-).version;
 const program = new Command();
 program
   .name('code-intel')
   .description('Local-first semantic code indexing and retrieval, exposed to AI agents via MCP.')
-  .version(packageVersion)
+  .version(PACKAGE_VERSION)
   .option('--repo <path>', 'repository root (defaults to the current directory) — use this when a host spawns the process with an unrelated cwd')
   .option('--embedding-provider <name>', 'ollama or openai-compatible')
   .option('--embedding-model <name>', 'embedding model id (e.g. nomic-embed-text or Qwen3-Embedding-8B)')
@@ -219,6 +218,7 @@ interface WizardOptions {
   timeoutMs?: number;
   nonInteractive?: boolean;
   cursor: boolean;
+  vscode?: boolean;
 }
 
 async function setupTargets(requestedRoot: string): Promise<string[]> {
@@ -231,6 +231,27 @@ async function setupTargets(requestedRoot: string): Promise<string[]> {
     console.log(`Using owning Git repository: ${targets[0]}\n`);
   }
   return targets;
+}
+
+interface EditorWiringOptions {
+  cursor: boolean;
+  vscode: boolean;
+  serverEnv?: Record<string, string>;
+}
+
+function wireEditors(options: EditorWiringOptions): void {
+  const installOptions = options.serverEnv ? { serverEnv: options.serverEnv } : undefined;
+  if (options.cursor) {
+    const result = installCursorIntegration(installOptions);
+    console.log(`\n${result.createdMcp ? 'Created' : 'Updated'} ${result.mcpPath}`);
+    console.log('Reload MCP in Cursor (Settings → MCP).');
+  }
+  if (options.vscode) {
+    const result = installVscodeIntegration(installOptions);
+    console.log(`\n${result.createdMcp ? 'Created' : 'Updated'} ${result.mcpPath}`);
+    for (const path of result.instructionPaths) console.log(`Wrote     ${path}`);
+    console.log('Reload the VS Code window (MCP: List Servers shows the server state).');
+  }
 }
 
 async function runWizard(options: WizardOptions): Promise<void> {
@@ -265,11 +286,7 @@ async function runWizard(options: WizardOptions): Promise<void> {
       const dimensions = await createEmbeddingProvider(config.embedding).dimensions();
       console.log(`[OK] ${config.embedding.model} returned ${dimensions}-dimension vectors`);
       for (const target of targets) await rebuildIndex(target);
-      if (options.cursor) {
-        const result = installCursorIntegration();
-        console.log(`\n${result.createdMcp ? 'Created' : 'Updated'} ${result.mcpPath}`);
-        console.log('Reload MCP in Cursor (Settings → MCP).');
-      }
+      wireEditors({ cursor: options.cursor, vscode: Boolean(options.vscode) });
       console.log('\nOllama setup complete.');
       return;
     }
@@ -326,11 +343,14 @@ async function runWizard(options: WizardOptions): Promise<void> {
     console.log(`[OK] ${config.embedding.model} returned ${dimensions}-dimension vectors`);
     for (const target of targets) await rebuildIndex(target);
 
-    if (options.cursor) {
-      const result = installCursorIntegration({ serverEnv: cursorSystemCaEnv() });
-      console.log(`\n${result.createdMcp ? 'Created' : 'Updated'} ${result.mcpPath}`);
+    if (options.cursor || options.vscode) {
+      wireEditors({
+        cursor: options.cursor,
+        vscode: Boolean(options.vscode),
+        serverEnv: cursorSystemCaEnv()
+      });
       console.log(
-        'Reload MCP in Cursor. Put CODE_INTEL_EMBEDDING_API_KEY (and USER if needed) in Cursor’s company-managed environment; code-intel does not save them.'
+        'Put CODE_INTEL_EMBEDDING_API_KEY (and USER if needed) in the editor’s company-managed environment; code-intel does not save them.'
       );
     }
     console.log('\nCorporate setup complete.');
@@ -363,7 +383,7 @@ program
     await runIndex(resolveRepoRoot());
   });
 
-async function runSetup(options: { cursor?: boolean } = {}): Promise<void> {
+async function runSetup(options: { cursor?: boolean; vscode?: boolean } = {}): Promise<void> {
   const targets = await setupTargets(resolveRepoRoot());
   for (const repoRoot of targets) {
     const { repoId, paths } = scaffoldRepo(repoRoot, cliLoadOptions());
@@ -373,34 +393,39 @@ async function runSetup(options: { cursor?: boolean } = {}): Promise<void> {
     console.log(`Repository id: ${repoId}\n`);
     await runIndex(repoRoot);
   }
-  if (options.cursor) {
-    const config = loadConfig(cliLoadOptions());
-    const result = installCursorIntegration(
-      config.embedding.provider === 'openai-compatible' && config.embedding.useSystemCa
-        ? { serverEnv: cursorSystemCaEnv() }
-        : undefined
+  const config = loadConfig(cliLoadOptions());
+  const needsSystemCa =
+    config.embedding.provider === 'openai-compatible' && config.embedding.useSystemCa;
+  wireEditors({
+    cursor: Boolean(options.cursor),
+    vscode: Boolean(options.vscode),
+    ...(needsSystemCa ? { serverEnv: cursorSystemCaEnv() } : {})
+  });
+  if (!options.cursor && !options.vscode) {
+    console.log(
+      '\nIf your editor is not wired up yet, run `code-intel cursor-install` or `code-intel vscode-install`.'
     );
-    console.log(`\n${result.createdMcp ? 'Created' : 'Updated'} ${result.mcpPath}`);
-    console.log('Reload MCP in Cursor (Settings → MCP).');
-  } else {
-    console.log('\nIf Cursor is not wired up yet, run `code-intel cursor-install`.');
   }
-  console.log('Done. Query this index from Cursor via the local-code-intelligence MCP tools.');
+  console.log(
+    'Done. Query this index from Cursor or VS Code via the local-code-intelligence MCP tools.'
+  );
 }
 
 program
   .command('setup')
   .description('Scaffold and index the current repository in one step')
   .option('--cursor', 'also wire Cursor MCP, user rule, skill, and hooks')
-  .action(async (options: { cursor?: boolean }) => {
-    await runSetup({ cursor: Boolean(options.cursor) });
+  .option('--vscode', 'also wire the VS Code MCP server and Copilot instructions')
+  .action(async (options: { cursor?: boolean; vscode?: boolean }) => {
+    await runSetup({ cursor: Boolean(options.cursor), vscode: Boolean(options.vscode) });
   });
 
 program
   .command('onboard')
   .description('Pull the embedding model if needed, index this repo, and wire Cursor')
   .option('--no-cursor', 'skip Cursor MCP / rule / skill install')
-  .action(async (options: { cursor?: boolean }) => {
+  .option('--vscode', 'also wire the VS Code MCP server and Copilot instructions')
+  .action(async (options: { cursor?: boolean; vscode?: boolean }) => {
     const repoRoot = resolveRepoRoot();
     const config = loadConfig(cliLoadOptions());
     const healthy = await runDoctor({ repoRoot, config, fix: true });
@@ -410,7 +435,7 @@ program
       return;
     }
     console.log('');
-    await runSetup({ cursor: options.cursor !== false });
+    await runSetup({ cursor: options.cursor !== false, vscode: Boolean(options.vscode) });
   });
 
 program
@@ -427,6 +452,7 @@ program
   .option('--timeout-ms <number>', 'request timeout in milliseconds', (value) => Number.parseInt(value, 10))
   .option('--non-interactive', 'fail instead of prompting for missing settings')
   .option('--no-cursor', 'do not install or update the Cursor MCP integration')
+  .option('--vscode', 'also install or update the VS Code MCP integration')
   .action(async (options: WizardOptions) => {
     await runWizard(options);
   });
@@ -443,6 +469,7 @@ program
   .option('--timeout-ms <number>', 'request timeout in milliseconds', (value) => Number.parseInt(value, 10))
   .option('--non-interactive', 'fail instead of prompting for missing settings')
   .option('--no-cursor', 'do not install or update the Cursor MCP integration')
+  .option('--vscode', 'also install or update the VS Code MCP integration')
   .action(async (options: Omit<WizardOptions, 'provider' | 'host'>) => {
     await runWizard({ ...options, provider: 'openai-compatible' });
   });
@@ -769,6 +796,26 @@ program
     console.log(`Wrote     ${result.skillPath}`);
     console.log(`MCP CLI:  ${result.cliPath}`);
     console.log('\nReload MCP in Cursor (Settings → MCP). New chats pick up the rule, skill, and hooks.');
+  });
+
+program
+  .command('vscode-install')
+  .description('Register the MCP server and Copilot instructions for VS Code (merges existing mcp.json)')
+  .option('--workspace', 'write .vscode/mcp.json and .github/instructions in this repository instead of the user profile')
+  .option('--user-dir <path>', 'VS Code User directory (defaults to the detected stable, Insiders, or VSCodium profile)')
+  .action((options: { workspace?: boolean; userDir?: string }) => {
+    const scope: VscodeInstallScope = options.workspace ? 'workspace' : 'user';
+    const result = installVscodeIntegration({
+      scope,
+      ...(options.userDir ? { userDir: resolve(options.userDir) } : {}),
+      ...(scope === 'workspace' ? { workspaceRoot: resolveRepoRoot() } : {})
+    });
+    console.log(`${result.createdMcp ? 'Created' : 'Updated'} ${result.mcpPath}`);
+    for (const path of result.instructionPaths) console.log(`Wrote     ${path}`);
+    console.log(`MCP CLI:  ${result.cliPath}`);
+    console.log(
+      '\nReload the VS Code window, then check MCP: List Servers. Copilot picks up the instructions file on the next chat request.'
+    );
   });
 
 program

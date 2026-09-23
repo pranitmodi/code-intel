@@ -3,6 +3,7 @@ import { createContext } from '../context.js';
 import { getTaskContext } from '../retrieval/taskContext.js';
 import { searchCodebase } from '../search/searchCodebase.js';
 import { estimateTokensFromText } from '../utils/tokens.js';
+import { serializeToolResult, taskContextPayload } from '../mcp/payload.js';
 import { CODE_INTEL_TASKS, type BenchmarkTask } from './datasets/codeIntelTasks.js';
 import {
   meanReciprocalRank,
@@ -97,16 +98,15 @@ export async function runRetrievalBenchmark(
     );
     const semanticLatencyMs = Date.now() - semanticStarted;
     const semanticFiles = semantic.map((item) => item.file);
-    const semanticTokens = estimateTokensFromText(JSON.stringify({ results: semantic }));
+    const semanticTokens = estimateTokensFromText(
+      serializeToolResult({ repo: app.repoRoot, results: semantic })
+    );
 
     const taskStarted = Date.now();
     const pkg = await getTaskContext(task.prompt, app, { maxTokens: 8000 });
     const taskContextLatencyMs = Date.now() - taskStarted;
     const taskFiles = pkg.files.map((file) => file.path);
-    // MCP intentionally strips the internal trace; benchmark the payload an agent actually receives.
-    const { files, trace: _trace, ...pkgWithoutSource } = pkg;
-    // Count the source-bearing payload delivered to the agent, while keeping source out of the report rows.
-    const taskTokens = estimateTokensFromText(JSON.stringify({ ...pkgWithoutSource, files }));
+    const taskTokens = estimateTokensFromText(serializeToolResult(taskContextPayload(app.repoRoot, pkg)));
 
     latencies.push(scan.latencyMs, semanticLatencyMs, taskContextLatencyMs);
     rows.push({
@@ -169,7 +169,7 @@ export async function runRetrievalBenchmark(
     '',
     'Retrieval',
     '-'.repeat(64),
-    `Precision@5                  ${aggregate.precisionAt5.toFixed(2)} (dataset ceiling ${aggregate.precisionAt5Ceiling.toFixed(2)})`,
+    `Precision@5                  ${aggregate.precisionAt5.toFixed(2)} (of the files returned; a full five-file answer could reach ${aggregate.precisionAt5Ceiling.toFixed(2)})`,
     `Relevant coverage@5          ${aggregate.relevantCoverageAt5.toFixed(2)}`,
     `Recall@10                    ${aggregate.recallAt10.toFixed(2)}`,
     `MRR                          ${aggregate.mrr.toFixed(2)}`,

@@ -3,8 +3,9 @@ import { listIndexedRepos } from '../indexer/registry.js';
 import { readBenchmark, usageHome } from './store.js';
 
 /**
- * Typical glob + `rg -C 2` + 12 file reads, fit from the 2026-09-07 A/B on
- * LocalCodeDB + Savor repos. Prefer a stored benchmark average when present.
+ * Rough cost of a glob listing, an `rg -C 2` dump, and 12 file reads for a
+ * repo of this size, used until `code-intel savings --benchmark` has measured
+ * the repo. Prefer a stored benchmark average when present.
  */
 export function estimateNaiveDiscoveryTokens(filesIndexed: number): number {
   const grepDump = Math.min(15_000, 400 + filesIndexed * 12);

@@ -1,7 +1,7 @@
 {
   "name": "@pranitmodi/code-intel",
-  "version": "0.2.0",
-  "description": "Local-first repository context layer for AI coding agents, exposed through MCP.",
+  "version": "0.3.0",
+  "description": "Local code index for AI coding agents: MCP server that gives Cursor, VS Code Copilot, and other agents ranked, token-budgeted context instead of whole-repo scans.",
   "type": "module",
   "license": "MIT",
   "publishConfig": {
@@ -9,15 +9,21 @@
   },
   "keywords": [
     "mcp",
-    "ollama",
-    "lancedb",
-    "embeddings",
+    "mcp-server",
+    "model-context-protocol",
     "cursor",
+    "vscode",
+    "github-copilot",
+    "copilot",
+    "coding-agents",
     "code-search",
-    "local-first",
     "semantic-search",
     "context-retrieval",
-    "coding-agents"
+    "token-optimization",
+    "embeddings",
+    "ollama",
+    "lancedb",
+    "local-first"
   ],
   "repository": {
     "type": "git",
@@ -40,10 +46,12 @@
     "CHANGELOG.md",
     "SECURITY.md",
     "CODE_OF_CONDUCT.md",
-    "docs"
+    "docs/ARCHITECTURE.md",
+    "docs/BENCHMARKS.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
     "dev": "tsx src/cli/index.ts",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
@@ -52,6 +60,7 @@
     "link": "npm run build && npm link",
     "onboard": "node dist/cli/index.js onboard",
     "benchmark:retrieval": "tsx src/cli/index.ts benchmark --format json",
+    "sync:guidance": "tsx scripts/sync-agent-guidance.mts",
     "prepublishOnly": "npm run build && npm run test:unit"
   },
   "dependencies": {
@@ -63,6 +72,7 @@
     "commander": "^15.0.0",
     "ignore": "^7.0.8",
     "js-yaml": "^5.4.1",
+    "jsonc-parser": "^3.3.1",
     "ollama": "^0.6.3",
     "tree-sitter-bash": "^0.25.1",
     "tree-sitter-css": "^0.25.0",

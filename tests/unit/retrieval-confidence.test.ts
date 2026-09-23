@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
-import { confidenceFor, isDocHeavyPath, queryLooksLikeCodeChange } from '../../src/retrieval/confidence.js';
+import { confidenceFor, queryLooksLikeCodeChange } from '../../src/retrieval/confidence.js';
+import { isDocPath, proseWeightFor } from '../../src/retrieval/docs.js';
 import type { RetrievalCandidate } from '../../src/retrieval/types.js';
 
 function candidate(file: string, total = 0.9): RetrievalCandidate {
@@ -37,9 +38,23 @@ describe('retrieval confidence', () => {
   const threshold = DEFAULT_CONFIG.retrieval.confidenceThreshold;
 
   it('flags documentation paths', () => {
-    expect(isDocHeavyPath('CODE_INTEL_NEXT_PHASE.md')).toBe(true);
-    expect(isDocHeavyPath('examples/cursor/local-code-intel.SKILL.md')).toBe(true);
-    expect(isDocHeavyPath('src/retrieval/taskContext.ts')).toBe(false);
+    expect(isDocPath('docs/DESIGN_NOTES.md')).toBe(true);
+    expect(isDocPath('examples/cursor/local-code-intel.SKILL.md')).toBe(true);
+    expect(isDocPath('.cursor/rules/use-local-code-intel.mdc')).toBe(true);
+    expect(isDocPath('LICENSE')).toBe(true);
+    expect(isDocPath('src/retrieval/taskContext.ts')).toBe(false);
+    expect(isDocPath('src/docs/render.ts')).toBe(false);
+  });
+
+  it('weights prose by how much the task is about documentation', () => {
+    expect(proseWeightFor('update the readme install section')).toBe(1);
+    expect(proseWeightFor('how does hybrid ranking work')).toBeLessThan(1);
+    expect(proseWeightFor('where is searchCodebase implemented')).toBeLessThan(
+      proseWeightFor('how does hybrid ranking work')
+    );
+    expect(proseWeightFor('add rate limiting to the search endpoint')).toBe(
+      proseWeightFor('where is searchCodebase implemented')
+    );
   });
 
   it('softens confidence when a code-change query ranks a doc first', () => {

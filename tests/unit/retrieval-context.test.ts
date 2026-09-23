@@ -6,7 +6,7 @@ import {
   grantFilesystemFallback,
   isFilesystemFallbackOpen
 } from '../../src/retrieval/fallback.js';
-import { buildContextPackageForTest } from '../../src/retrieval/taskContext.js';
+import { buildContextPackageForTest, minOrganicScore } from '../../src/retrieval/taskContext.js';
 import type { RetrievalCandidate } from '../../src/retrieval/types.js';
 import { shouldDenyTreeScan } from '../../src/cursor/treeScanPolicy.js';
 
@@ -39,6 +39,25 @@ function fakeCandidate(): RetrievalCandidate {
     reason: 'semantic similarity'
   };
 }
+
+function scored(total: number, exactFloor?: number): RetrievalCandidate {
+  return { ...fakeCandidate(), score: { ...fakeCandidate().score, total }, ...(exactFloor ? { exactFloor } : {}) };
+}
+
+describe('context cutoff', () => {
+  it('returns only the definition for a "where is X" lookup that found X exactly', () => {
+    const ranked = [scored(0.95, 0.95), scored(0.44), scored(0.43)];
+    expect(minOrganicScore(ranked, 'Where is searchCodebase implemented?')).toBe(Number.POSITIVE_INFINITY);
+    expect(minOrganicScore(ranked, 'Where is searchCodebase used?')).toBe(0);
+    expect(minOrganicScore([scored(0.9, 0.9), scored(0.5)], 'Where is the config?')).toBe(0);
+  });
+
+  it('cuts organic hits only at a clear score drop past the top two', () => {
+    expect(minOrganicScore([scored(0.76), scored(0.7), scored(0.52), scored(0.5)], 'find the grep tests')).toBe(0.7);
+    expect(minOrganicScore([scored(0.69), scored(0.5), scored(0.49)], 'fix stale index')).toBe(0);
+    expect(minOrganicScore([scored(0.6), scored(0.58), scored(0.55), scored(0.5)], 'how does ranking work')).toBe(0);
+  });
+});
 
 describe('context package', () => {
   it('groups chunks by file and reports empty-result confidence', () => {

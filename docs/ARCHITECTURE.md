@@ -74,12 +74,13 @@ Important properties:
 - A SHA-256 file hash decides whether a file changed.
 - Normalized chunk hashes reuse embeddings when surrounding line numbers move.
 - Content-identical renames update paths without re-embedding.
-- Small watcher batches update individual paths; bursts above the threshold use full discovery.
-- A single-writer PID lock prevents concurrent index corruption.
+- Small watcher batches update individual paths; bursts above the threshold use full discovery. Directory events expand to the files under them, and `.gitignore` changes force full discovery.
+- Watcher event paths are mapped back from their symlink-resolved form to the configured repository root.
+- An atomic (`O_EXCL`) lock file serializes writers across processes. A lock whose process is gone is reclaimed; the writer then checks out the latest LanceDB table version before merging, so concurrent processes never write from a stale version.
 - A stable content sample complements file-count checks so edits can mark the index stale even when no files were added or removed.
-- Watch failures and lock skips are persisted and exposed by `index_status`.
+- Failed or lock-blocked watch batches are requeued and retried with exponential backoff. Failures are persisted and exposed by `index_status`.
 
-The watcher belongs to the MCP or `code-intel watch` process. If that process is stopped, changes are caught up by the next MCP startup or explicit `code-intel index`.
+The watcher belongs to the MCP or `code-intel watch` process. The MCP server rechecks the registry every 30 seconds to watch repositories indexed later and to stop watching removed ones. If that process is stopped, changes are caught up by the next MCP startup or explicit `code-intel index`.
 
 ## Chunking and metadata
 
@@ -115,19 +116,30 @@ flowchart TB
   score -->|"stale or low confidence"| fallback
 ```
 
-The final score combines semantic similarity, full-text relevance, exact symbol matching, path matching, structural information, relationship signals, test intent, and recency. Exact symbols and exact basenames receive floors so a definition is not buried under vaguely similar vector hits.
+The score combines semantic similarity, full-text relevance, symbol and path matches, structural information, relationship signals, test intent, and recency. When the same chunk arrives from several sources, the stronger score wins; summing them was measured and ranked worse.
+
+Exact matches get score floors, so a definition is not buried under vaguely similar vector hits. The floors only apply to evidence that is actually exact:
+
+- a symbol named in the query as a whole word;
+- an identifier from the task that no chunk defines, such as a configuration key, found by keyword search;
+- a file whose full name, or a multi-word stem of six or more characters, appears in the query;
+- a lower floor for a file whose stem parts all appear as separate query words, except generic stems (`index`, `types`, `config`, ...) and data files.
+
+Prose (Markdown, reStructuredText, plain text, README, CHANGELOG) keeps full weight for documentation questions, gets 0.85 for "how/why/explain" questions, and 0.7 for "where/fix/add" work. It never receives exact-match floors unless the question is about docs.
 
 `get_task_context` then:
 
-1. Generates and merges candidates.
+1. Generates and merges candidates, including files whose names match the task or a configuration concept.
 2. Selects high-scoring seeds.
 3. Expands relative imports, TypeScript path aliases, Python modules, references, tests, and configuration files.
 4. Limits expansion-only files near the top.
-5. Applies per-file and per-symbol caps.
-6. Packs chunks under the requested token budget.
-7. Returns files in score order with confidence and retrieval statistics.
+5. Applies per-file and per-symbol caps, and drops chunks that repeat 80% or more of an already selected chunk's words.
+6. Stops early. A definition lookup ("where is `X`") with an exact symbol match returns only exact matches. Otherwise results end at the first score gap of 0.15 or more once two non-exact files are kept. Exact matches are never cut.
+7. Packs chunks under the token budget (normal mode: 8,000 tokens).
 
-If the index is stale, results are empty, confidence is below the threshold, or a code-change query ranks documentation first, the Cursor integration temporarily permits targeted filesystem search.
+The MCP server returns a compact JSON payload: repository, confidence, token estimate, and for each file its path, reason, one score, and chunks, plus relationships between files that were sent. The score breakdown and retrieval trace stay available through `code-intel context --explain`. The benchmarks count this exact payload.
+
+If the index is stale, results are empty, confidence is below the threshold, or a code-change query ranks documentation first, the answer says so and the Cursor hook temporarily permits repository-wide filesystem search.
 
 ## MCP boundary
 
@@ -141,6 +153,8 @@ The MCP server exposes:
 - `get_repo_context`, `list_indexed_repos`, and `index_status` for orientation
 
 The same index can serve Cursor, VS Code, Claude Code, Codex, or another MCP client. Each tool accepts an optional repository path, ID, or basename, allowing one parent workspace to address multiple indexed child repositories.
+
+`code-intel cursor-install` and `code-intel vscode-install` write the same server entry in each client's own format: Cursor reads `mcpServers` and supports rules, skills, and hooks, while VS Code reads `servers`, requires an explicit `stdio` type, and is steered by an `applyTo: '**'` instructions file because it has no hook mechanism.
 
 ## Provider and privacy boundary
 

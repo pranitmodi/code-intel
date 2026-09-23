@@ -1,6 +1,6 @@
 # Contributing to code-intel
 
-Thanks for helping. The goal of this project is a **local-first** code index: embeddings and source stay on the contributor's machine, and AI agents query that index over MCP instead of re-scanning the tree.
+Thanks for helping. The goal of this project is to make AI coding agents read less code to get the same answer. A repository is indexed once on the developer's machine and kept current, and agents query that index over MCP instead of re-scanning the tree. By default, embeddings run locally through Ollama.
 
 Before changing a subsystem, read [Architecture](docs/ARCHITECTURE.md). Retrieval changes must follow the measurement rules in [Benchmarks](docs/BENCHMARKS.md). Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
@@ -62,15 +62,21 @@ Retrieval quality is part of the product contract. A ranking change should inclu
 - before/after `npm run benchmark:retrieval` results;
 - an explanation for any task-label or relevance-grade change.
 
-Do not improve metrics by broadening the context until it resembles a tree scan. The release floor is relevant-file coverage@5 ≥ 0.60, Recall@10 ≥ 0.75, MRR ≥ 0.70, and average per-task token reduction ≥ 60% on the repository dataset.
+Do not improve metrics by broadening the context until it resembles a tree scan, and do not cut tokens by dropping relevant files. The release floor is relevant-file coverage@5 ≥ 0.60, Recall@10 ≥ 0.75, MRR ≥ 0.70, and average per-task token reduction ≥ 60% on the repository dataset.
+
+Benchmarks count the exact payload the MCP server returns (`src/mcp/payload.ts`). A field added to that payload costs tokens on every call, so it needs a reason an agent would use it.
+
+## Agent guidance text
+
+The MCP instructions, Cursor rule and skill, Copilot instructions, and session hook output are sent to the agent in every session. Keep them short and provider-neutral. `tests/unit/agent-guidance.test.ts` keeps each under 260 tokens and checks that the files in `examples/` and `.cursor/rules/` match the strings in `src/cursor` and `src/vscode`; run `npm run sync:guidance` after editing those strings.
 
 When adding a benchmark task, use a realistic engineering request and defensible relevant files. Avoid tasks designed around the current ranker's implementation.
 
 ## Pull requests
 
-- Keep changes focused; match the existing module boundaries (`src/discovery`, `src/chunker`, `src/embeddings`, `src/vector-store`, `src/indexer`, `src/search`, `src/retrieval`, `src/benchmark`, `src/mcp`).
+- Keep changes focused; match the existing module boundaries (`src/discovery`, `src/chunker`, `src/embeddings`, `src/vector-store`, `src/indexer`, `src/search`, `src/retrieval`, `src/benchmark`, `src/mcp`). Editor wiring lives in `src/cursor` and `src/vscode`, with shared config merging in `src/editors`.
 - Do not commit `node_modules/`, `dist/`, or anything under `~/.local-code-intelligence`.
-- Do not add cloud embedding APIs as the default path; local Ollama is the contract.
+- Keep Ollama the default provider so the out-of-the-box path never sends source off the machine. New providers go behind `EmbeddingProvider` and must be opt-in.
 - Run `npm run typecheck` and `npm run test:unit` before opening a PR.
 - Keep public examples provider-neutral. Do not commit organization-specific endpoints, usernames, paths, source, or benchmark credentials.
 - Update documentation when changing CLI commands, MCP tools, privacy boundaries, storage, or watcher behavior.

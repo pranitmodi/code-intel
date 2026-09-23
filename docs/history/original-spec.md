@@ -1,6 +1,6 @@
 # Build a Local Persistent Code Intelligence Server
 
-> Historical design specification. This document records the original implementation brief and may describe targets rather than current behavior. For maintained documentation, use the [README](README.md), [architecture](docs/ARCHITECTURE.md), and [benchmarks](docs/BENCHMARKS.md).
+> Historical design specification. This document records the original implementation brief and may describe targets rather than current behavior. For maintained documentation, use the [README](../../README.md), [architecture](../ARCHITECTURE.md), and [benchmarks](../BENCHMARKS.md).
 
 I want you to build a **local-first semantic code indexing and retrieval system** for software repositories.
 

@@ -11,7 +11,7 @@ const EXPLORE_TASK =
   /\b(explor(e|ing)|search the (code|repo|codebase)|find where|how does)\b/i;
 
 export const TREE_SCAN_DENY_MESSAGE =
-  'Use MCP user-local-code-intelligence first (get_task_context / search_codebase / search_symbol / get_file_context). Corpus embeddings already live in local LanceDB; Ollama only embeds the query. Grep/Glob/explore is allowed after those tools miss, after low-confidence retrieval, or against a specific file or subdirectory — not the whole repo.';
+  'This repo is already indexed: use MCP user-local-code-intelligence first (get_task_context, search_symbol, search_codebase, then get_file_context). Grep/Glob/explore is allowed after those miss or report low confidence, or against a specific file or subdirectory, not the whole repo.';
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';

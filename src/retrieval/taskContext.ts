@@ -10,7 +10,7 @@ import { hybridSearch } from './hybrid.js';
 import { analyzeQuery } from './intent.js';
 import { confidenceFor } from './confidence.js';
 import { candidateImportPaths, loadTsPathAliases } from './resolveImport.js';
-import { candidateFromRecord, pathScore } from './score.js';
+import { candidateFromRecord, EXACT_SYMBOL_FLOOR, pathScore } from './score.js';
 import { mergeCandidates, selectCandidates } from './select.js';
 import type {
   ContextMode,
@@ -25,6 +25,34 @@ const MODE_LIMITS: Record<ContextMode, { chunks: number; tokens: number; perFile
   normal: { chunks: 8, tokens: 8000, perFile: 2, perSymbol: 2 },
   deep: { chunks: 24, tokens: 25_000, perFile: 6, perSymbol: 4 }
 };
+
+const CONFIG_STEM = /^(defaults?|configs?|settings?)$/;
+/** "Where is X implemented?" — once X is found exactly, its definition is the answer. */
+const DEFINITION_LOOKUP = /^\s*(?:where\b|which (?:file|module|function|class)\b|locate\b|find (?:the )?(?:definition|implementation)\b)/i;
+const USAGE_LOOKUP = /\b(?:tests?|specs?|usages?|used|references?|callers?|called|calls)\b/i;
+/** A drop this large between consecutive non-exact scores separates matches from noise. */
+const SCORE_GAP = 0.15;
+const MIN_ORGANIC_KEPT = 2;
+
+/**
+ * Lowest score a non-exact chunk may have. Similarity scores are compressed
+ * (relevant and unrelated chunks often differ by a few hundredths), so the
+ * cut is made only at a clear drop, never at a fixed ratio.
+ */
+export function minOrganicScore(ranked: RetrievalCandidate[], task: string): number {
+  if (
+    DEFINITION_LOOKUP.test(task) &&
+    !USAGE_LOOKUP.test(task) &&
+    ranked.some((candidate) => (candidate.exactFloor ?? 0) >= EXACT_SYMBOL_FLOOR)
+  ) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const organic = ranked.filter((candidate) => !candidate.exactFloor).map((candidate) => candidate.score.total);
+  for (let index = MIN_ORGANIC_KEPT; index < organic.length; index++) {
+    if (organic[index - 1]! - organic[index]! >= SCORE_GAP) return organic[index - 1]!;
+  }
+  return 0;
+}
 
 function escapeSqlString(value: string): string {
   return value.replace(/'/g, "''");
@@ -57,6 +85,23 @@ async function queryFilesLike(
     `file_path LIKE '%${escapeSqlString(pattern)}%'`,
     limit
   );
+}
+
+/** Files literally named `<stem>.<ext>` (singular or plural stem), so "default" skips default-ignore.ts. */
+async function queryFilesWithStem(
+  vectorStore: LanceVectorStore,
+  stem: string,
+  limit: number
+): Promise<ChunkSearchResult[]> {
+  const singular = stem.toLowerCase().replace(/s$/, '');
+  const clauses = [singular, `${singular}s`].flatMap((name) => {
+    const s = escapeSqlString(name);
+    return [`file_path LIKE '%/${s}.%'`, `file_path LIKE '${s}.%'`];
+  });
+  const rows = await vectorStore.queryAll(CHUNK_COLUMNS, `(${clauses.join(' OR ')})`, limit * 4);
+  return rows
+    .filter((row) => fileStem(row.file_path).toLowerCase().replace(/s$/, '') === singular)
+    .slice(0, limit);
 }
 
 async function queryFilesExact(
@@ -223,13 +268,13 @@ export async function getTaskContext(
   const pathTerms = intent.files
     .map((file) => file.replaceAll('\\', '/').split('/').pop() ?? file)
     .slice(0, 8);
-  if (intent.operations.includes('find_config')) {
-    pathTerms.push(
-      ...intent.concepts.filter((concept) => /^(defaults?|configs?|settings?)$/.test(concept))
-    );
-  }
-  for (const term of [...new Set(pathTerms)]) {
-    const rows = await queryFilesLike(app.vectorStore, term, 4);
+  const configStems = intent.operations.includes('find_config')
+    ? intent.concepts.filter((concept) => CONFIG_STEM.test(concept))
+    : [];
+  for (const term of [...new Set([...pathTerms, ...configStems])]) {
+    const rows = pathTerms.includes(term)
+      ? await queryFilesLike(app.vectorStore, term, 4)
+      : await queryFilesWithStem(app.vectorStore, term, 4);
     for (const record of rows) {
       addCandidate(
         merged,
@@ -391,6 +436,7 @@ export async function getTaskContext(
   const packed = selectCandidates(all, {
     limit: Math.min(retrieval.maxContextChunks, caps.chunks),
     maxTokens,
+    minOrganicScore: minOrganicScore(all, task),
     maxChunksPerFile: caps.perFile,
     maxChunksPerSymbol: caps.perSymbol,
     maxExpansionOnlyFilesInTopK: 3,

@@ -90,4 +90,34 @@ describe('selectCandidates', () => {
     expect(result.selected.filter((item) => item.sources[0] === 'expansion')).toHaveLength(2);
     expect(result.discarded.some((item) => item.reason === 'expansion_top_k_cap')).toBe(true);
   });
+
+  it('drops a chunk that repeats one already selected, even from another file', () => {
+    const rule =
+      'Use get_task_context first for broad tasks, search_symbol for known names, and get_file_context for exact ranges before editing any file in the repository.';
+    const ranked = [
+      { ...candidate({ id: 'src', file: 'src/rule.ts', symbol: 'RULE', scoreTotal: 0.9 }), content: rule },
+      { ...candidate({ id: 'copy', file: 'examples/rule.mdc', symbol: null, scoreTotal: 0.8 }), content: `# Rule\n\n${rule}` },
+      { ...candidate({ id: 'short', file: 'src/a.ts', symbol: 'a', scoreTotal: 0.7 }), content: 'export const a = 1;' },
+      { ...candidate({ id: 'short2', file: 'src/b.ts', symbol: 'b', scoreTotal: 0.6 }), content: 'export const a = 1;' }
+    ];
+    const result = selectCandidates(ranked, { limit: 10, maxChunksPerFile: 4, maxChunksPerSymbol: 2 });
+    expect(result.selected.map((item) => item.id)).toEqual(['src', 'short', 'short2']);
+    expect(result.discarded).toContainEqual({ id: 'copy', file: 'examples/rule.mdc', reason: 'duplicate' });
+  });
+
+  it('applies minOrganicScore to organic hits only', () => {
+    const ranked = [
+      { ...candidate({ id: 'exact', file: 'a.ts', symbol: 'a', scoreTotal: 0.3 }), exactFloor: 0.3 },
+      candidate({ id: 'strong', file: 'b.ts', symbol: 'b', scoreTotal: 0.6 }),
+      candidate({ id: 'weak', file: 'c.ts', symbol: 'c', scoreTotal: 0.4 })
+    ];
+    const result = selectCandidates(ranked, {
+      limit: 10,
+      minOrganicScore: 0.5,
+      maxChunksPerFile: 4,
+      maxChunksPerSymbol: 2
+    });
+    expect(result.selected.map((item) => item.id)).toEqual(['exact', 'strong']);
+    expect(result.discarded).toContainEqual({ id: 'weak', file: 'c.ts', reason: 'min_score' });
+  });
 });

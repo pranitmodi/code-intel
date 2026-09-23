@@ -63,6 +63,7 @@ describe('index progress and bad-file isolation', () => {
     const paths = resolveRepoPaths(config, repoRoot, computeRepoId(repoRoot));
     const stored: ChunkRecord[] = [];
     const vectorStore = {
+      syncLatest: async () => undefined,
       getAllFileHashes: async () => new Map<string, string>(),
       getChunksForFile: async () => [],
       upsertChunks: async (records: ChunkRecord[]) => {

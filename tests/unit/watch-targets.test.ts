@@ -20,6 +20,16 @@ describe('watchTargetsForWorkspace', () => {
   it('watches nothing without a workspace root', () => {
     expect(watchTargetsForWorkspace(undefined, [admin, web, app])).toEqual([]);
   });
+
+  it('watches the owning repo when a subfolder of it is opened', () => {
+    expect(watchTargetsForWorkspace(`${app}/packages/ui`, [admin, web, app, other])).toEqual([app]);
+  });
+
+  it('prefers the deepest owning repo and ignores name-prefix siblings', () => {
+    const nested = `${app}/vendor/lib`;
+    expect(watchTargetsForWorkspace(`${nested}/src`, [app, nested])).toEqual([nested]);
+    expect(watchTargetsForWorkspace(`${parent}/app-two`, [app])).toEqual([]);
+  });
 });
 
 describe('DEFAULT_CONFIG', () => {
