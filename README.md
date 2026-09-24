@@ -42,11 +42,15 @@ Requires Node.js 20+ and either [Ollama](https://ollama.com/download) (the defau
 ```bash
 npm install -g @pranitmodi/code-intel
 cd /path/to/your-project
-code-intel onboard            # pulls the embedding model if needed, indexes, wires Cursor
-code-intel onboard --vscode   # same, and also wires VS Code / GitHub Copilot
+
+code-intel onboard                        # Cursor
+code-intel onboard --vscode --no-cursor   # VS Code and GitHub Copilot
+code-intel onboard --vscode               # both
 ```
 
-Reload the MCP servers in your editor. From then on, the agent calls `get_task_context` before touching files, and new or edited code is indexed automatically.
+Each command pulls the embedding model if it is missing, indexes the repository, and wires the editor: the MCP server plus the instructions that tell the agent to retrieve before it searches.
+
+Then reload the editor. In VS Code, open the repository with **File → Open Folder** and check **MCP: List Servers**. In Cursor, reload MCP under **Settings → MCP**. From then on, the agent calls `get_task_context` before touching files, and new or edited code is indexed automatically.
 
 Without a global install: `npx -y @pranitmodi/code-intel onboard --repo /path/to/your-project`.
 
@@ -92,9 +96,14 @@ code-intel vscode-install              # your user profile, every workspace
 code-intel vscode-install --workspace  # this repository only (.vscode/mcp.json), committable
 ```
 
-This merges VS Code's `mcp.json`, keeping other servers and comments. It also writes an always-applied Copilot instructions file that tells Copilot to retrieve before it searches. Stable, Insiders, and VSCodium are detected; use `--user-dir` to override. VS Code has no hooks, so the instructions file does the steering. Confirm with **MCP: List Servers**.
+This merges VS Code's `mcp.json`, keeping other servers and comments, and writes an always-applied Copilot instructions file that tells Copilot to retrieve before it searches. Stable, Insiders, and VSCodium are detected; use `--user-dir` to override. VS Code has no hooks, so the instructions file does the steering.
 
-A hand-written entry looks like this ([example](examples/mcp/vscode.mcp.json)); `type` is required or VS Code skips the entry:
+Two differences from Cursor worth knowing:
+
+- **Open one folder.** VS Code expands `${workspaceFolder}` only when the window has a single folder open. An empty window or a multi-root `.code-workspace` leaves it unset; the server still starts, but it has no default repository, so each tool call has to name one with `repo`.
+- **Credentials are prompted, not stored.** When the embedding provider is OpenAI-compatible, the installer wires `${input:…}` prompts, so VS Code asks for the key once and keeps it in its own secret storage rather than in `mcp.json`. Leave the user-name prompt blank if your endpoint doesn't need one.
+
+Confirm the result with **MCP: List Servers**. A hand-written entry looks like this ([example](examples/mcp/vscode.mcp.json)); `type` is required or VS Code skips the entry:
 
 ```json
 {
@@ -174,7 +183,7 @@ For each indexed repository, this compares a typical agent scan (list files, `rg
 ## CLI
 
 ```text
-code-intel onboard [--vscode]      first-time setup: model, index, editor wiring
+code-intel onboard [--vscode] [--no-cursor]   first-time setup: model, index, editor wiring
 code-intel wizard                  interactive Ollama or OpenAI-compatible setup
 code-intel setup [--cursor] [--vscode]   index and optionally wire editors
 code-intel status                  index size, freshness, last watcher error
@@ -183,6 +192,8 @@ code-intel search "<query>"        hybrid search (--explain for the score breakd
 code-intel symbol <name>           symbol lookup
 code-intel index | rebuild | clean incremental index, full rebuild, remove the index
 code-intel repos                   list indexed repositories
+code-intel cursor-install          wire Cursor (MCP, rule, skill, hooks)
+code-intel vscode-install [--workspace]  wire VS Code MCP and Copilot instructions
 code-intel doctor [--fix]          check provider, model, credentials, and storage
 code-intel savings [--benchmark]   estimated token and dollar savings
 code-intel benchmark               labeled retrieval benchmark
@@ -259,6 +270,8 @@ Environment variables: `CODE_INTEL_EMBEDDING_PROVIDER`, `CODE_INTEL_EMBEDDING_MO
 - **Anything odd:** `code-intel doctor` checks the provider, model, credentials, and index storage.
 - **"Model not found":** `ollama pull <model>` for the configured `embedding.model`, or `code-intel doctor --fix`.
 - **Tools missing in the editor:** reload the MCP server list and read the server's stderr in the editor's MCP log.
+- **VS Code: no default repository, or a warning that `--repo` got no path:** the window has no folder open, or it is a multi-root workspace where `${workspaceFolder}` does not expand. Open the repository with **File → Open Folder**, use `${workspaceFolder:<name>}` for one root of a multi-root workspace, or put an absolute path in `mcp.json`.
+- **VS Code: embedding calls fail with 401 or 403:** the saved answer to a `${input:…}` prompt is wrong. Clear the stored inputs from the server's entry in **MCP: List Servers** and start it again, or replace the `${input:…}` values in `mcp.json` with variables your company environment already provides.
 - **Recent edits not in results:** `code-intel status` (or the `index_status` tool) shows staleness and the last watcher error. `[WATCH]` lines in the MCP log list the watched repositories.
 - **Proxy authentication failures:** set `CODE_INTEL_EMBEDDING_API_KEY` (and `CODE_INTEL_EMBEDDING_USER` if the endpoint needs it) in both your shell and the MCP server's `env`.
 - **Changed embedding model:** run `code-intel rebuild`; vectors from different models are not comparable.

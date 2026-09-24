@@ -19,7 +19,11 @@ import { createEmbeddingProvider } from '../embeddings/createEmbeddingProvider.j
 import { loadConfig, type EmbeddingConfigOverrides, type LoadConfigOptions } from '../config/load.js';
 import { resolveRepoPaths } from '../config/paths.js';
 import { installCursorIntegration } from '../cursor/install.js';
-import { installVscodeIntegration, type VscodeInstallScope } from '../vscode/install.js';
+import {
+  installVscodeIntegration,
+  type VscodeInstallResult,
+  type VscodeInstallScope
+} from '../vscode/install.js';
 import { resolveIndexRoots } from '../discovery/gitRoots.js';
 import { computeRepoId } from '../utils/repo-id.js';
 import { removeRegistryEntry } from '../indexer/registry.js';
@@ -34,6 +38,7 @@ import { startMcpServer } from '../mcp/server.js';
 import { formatBytes } from '../utils/dirSize.js';
 import { runDoctor } from './doctor.js';
 import { formatCliFailure } from './formatCliFailure.js';
+import { REPO_OPTION_UNRESOLVED_HINT, repoOptionPath, repoOptionUnresolved } from './repoOption.js';
 import { runSavingsBenchmark } from '../usage/benchmark.js';
 import { formatSavingsReport, summarizeUsage } from '../usage/report.js';
 import { readBenchmark, readUsageEvents } from '../usage/store.js';
@@ -47,7 +52,9 @@ program
   .name('code-intel')
   .description('Local-first semantic code indexing and retrieval, exposed to AI agents via MCP.')
   .version(PACKAGE_VERSION)
-  .option('--repo <path>', 'repository root (defaults to the current directory) — use this when a host spawns the process with an unrelated cwd')
+  // Optional argument: editors pass `--repo ${workspaceFolder}`, which arrives
+  // bare or empty when no folder is open. That must not kill the server.
+  .option('--repo [path]', 'repository root (defaults to the current directory) — use this when a host spawns the process with an unrelated cwd')
   .option('--embedding-provider <name>', 'ollama or openai-compatible')
   .option('--embedding-model <name>', 'embedding model id (e.g. nomic-embed-text or Qwen3-Embedding-8B)')
   .option('--embedding-host <url>', 'Ollama host (provider=ollama)')
@@ -55,7 +62,8 @@ program
   .option('--embedding-path <path>', 'embeddings path appended to base URL (default /embeddings)');
 
 interface CliGlobalOptions {
-  repo?: string;
+  /** `true` when `--repo` was passed without a value. */
+  repo?: string | boolean;
   embeddingProvider?: string;
   embeddingModel?: string;
   embeddingHost?: string;
@@ -64,9 +72,7 @@ interface CliGlobalOptions {
 }
 
 function resolveRepoRoot(): string {
-  const opts = program.opts<CliGlobalOptions>();
-  const candidate = opts.repo ? resolve(opts.repo) : process.cwd();
-  return existsSync(candidate) ? candidate : resolve(opts.repo ?? process.cwd());
+  return repoOptionPath(program.opts<CliGlobalOptions>().repo) ?? process.cwd();
 }
 
 function cliLoadOptions(): LoadConfigOptions {
@@ -239,6 +245,21 @@ interface EditorWiringOptions {
   serverEnv?: Record<string, string>;
 }
 
+/** VS Code can prompt for the credentials an openai-compatible endpoint needs. */
+function needsCredentialPrompts(): boolean {
+  return loadConfig(cliLoadOptions()).embedding.provider === 'openai-compatible';
+}
+
+function reportVscodeInstall(result: VscodeInstallResult): void {
+  console.log(`\n${result.createdMcp ? 'Created' : 'Updated'} ${result.mcpPath}`);
+  for (const path of result.instructionPaths) console.log(`Wrote     ${path}`);
+  if (result.promptedFor.length > 0) {
+    console.log(`VS Code will prompt for: ${result.promptedFor.join(', ')}`);
+  }
+  console.log('Reload the VS Code window, then check MCP: List Servers.');
+  console.log('Open the repository with File → Open Folder so ${workspaceFolder} resolves.');
+}
+
 function wireEditors(options: EditorWiringOptions): void {
   const installOptions = options.serverEnv ? { serverEnv: options.serverEnv } : undefined;
   if (options.cursor) {
@@ -247,10 +268,9 @@ function wireEditors(options: EditorWiringOptions): void {
     console.log('Reload MCP in Cursor (Settings → MCP).');
   }
   if (options.vscode) {
-    const result = installVscodeIntegration(installOptions);
-    console.log(`\n${result.createdMcp ? 'Created' : 'Updated'} ${result.mcpPath}`);
-    for (const path of result.instructionPaths) console.log(`Wrote     ${path}`);
-    console.log('Reload the VS Code window (MCP: List Servers shows the server state).');
+    reportVscodeInstall(
+      installVscodeIntegration({ ...installOptions, promptForCredentials: needsCredentialPrompts() })
+    );
   }
 }
 
@@ -422,8 +442,8 @@ program
 
 program
   .command('onboard')
-  .description('Pull the embedding model if needed, index this repo, and wire Cursor')
-  .option('--no-cursor', 'skip Cursor MCP / rule / skill install')
+  .description('Pull the embedding model if needed, index this repo, and wire your editor')
+  .option('--no-cursor', 'skip Cursor MCP / rule / skill install (use with --vscode for VS Code only)')
   .option('--vscode', 'also wire the VS Code MCP server and Copilot instructions')
   .action(async (options: { cursor?: boolean; vscode?: boolean }) => {
     const repoRoot = resolveRepoRoot();
@@ -805,17 +825,17 @@ program
   .option('--user-dir <path>', 'VS Code User directory (defaults to the detected stable, Insiders, or VSCodium profile)')
   .action((options: { workspace?: boolean; userDir?: string }) => {
     const scope: VscodeInstallScope = options.workspace ? 'workspace' : 'user';
+    const config = loadConfig(cliLoadOptions());
     const result = installVscodeIntegration({
       scope,
+      promptForCredentials: config.embedding.provider === 'openai-compatible',
+      ...(config.embedding.useSystemCa ? { serverEnv: cursorSystemCaEnv() } : {}),
       ...(options.userDir ? { userDir: resolve(options.userDir) } : {}),
       ...(scope === 'workspace' ? { workspaceRoot: resolveRepoRoot() } : {})
     });
-    console.log(`${result.createdMcp ? 'Created' : 'Updated'} ${result.mcpPath}`);
-    for (const path of result.instructionPaths) console.log(`Wrote     ${path}`);
+    reportVscodeInstall(result);
     console.log(`MCP CLI:  ${result.cliPath}`);
-    console.log(
-      '\nReload the VS Code window, then check MCP: List Servers. Copilot picks up the instructions file on the next chat request.'
-    );
+    console.log('Copilot picks up the instructions file on the next chat request.');
   });
 
 program
@@ -823,9 +843,12 @@ program
   .description('Start the MCP server over stdio (watches indexed repos under the workspace by default)')
   .option('--no-watch', 'do not start incremental file watchers')
   .action(async (options: { watch?: boolean }) => {
-    const opts = program.opts<CliGlobalOptions>();
-    const repoRoot = opts.repo && existsSync(resolve(opts.repo)) ? resolve(opts.repo) : resolveRepoRoot();
-    await startMcpServer(repoRoot, { watch: options.watch !== false });
+    const requested = program.opts<CliGlobalOptions>().repo;
+    if (repoOptionUnresolved(requested)) console.error(REPO_OPTION_UNRESOLVED_HINT);
+    const repoRoot = repoOptionPath(requested);
+    await startMcpServer(repoRoot && existsSync(repoRoot) ? repoRoot : process.cwd(), {
+      watch: options.watch !== false
+    });
   });
 
 void program.parseAsync(process.argv).catch((error: unknown) => {

@@ -97,6 +97,53 @@ describe('vscode-install', () => {
     expect(await readFile(result.mcpPath, 'utf-8')).toContain('"servers"');
   });
 
+  it('asks VS Code to prompt for embedding credentials instead of storing them', async () => {
+    home = await mkdtemp(join(tmpdir(), 'code-intel-vscode-creds-'));
+    const userDir = join(home, 'Code', 'User');
+    const result = installVscodeIntegration({
+      home,
+      userDir,
+      cliPath: '/abs/cli.js',
+      promptForCredentials: true
+    });
+
+    expect(result.promptedFor).toEqual([
+      'CODE_INTEL_EMBEDDING_API_KEY',
+      'CODE_INTEL_EMBEDDING_USER'
+    ]);
+    const mcp = JSON.parse(await readFile(result.mcpPath, 'utf-8')) as {
+      inputs: Array<{ id: string; type: string; password?: boolean }>;
+      servers: { 'local-code-intelligence': { env: Record<string, string> } };
+    };
+    expect(mcp.servers['local-code-intelligence'].env).toEqual({
+      CODE_INTEL_EMBEDDING_API_KEY: '${input:code-intel-embedding-api-key}',
+      CODE_INTEL_EMBEDDING_USER: '${input:code-intel-embedding-user}'
+    });
+    expect(mcp.inputs.map((input) => input.id)).toEqual([
+      'code-intel-embedding-api-key',
+      'code-intel-embedding-user'
+    ]);
+    expect(mcp.inputs[0].password).toBe(true);
+
+    // Rerunning must not duplicate the prompts.
+    const again = installVscodeIntegration({ home, userDir, cliPath: '/abs/cli.js', promptForCredentials: true });
+    expect(again.promptedFor).toEqual([]);
+    const rerun = JSON.parse(await readFile(result.mcpPath, 'utf-8')) as { inputs: unknown[] };
+    expect(rerun.inputs).toHaveLength(2);
+  });
+
+  it('keeps credentials a user already configured', () => {
+    const existing = JSON.stringify({
+      servers: {
+        'local-code-intelligence': { env: { CODE_INTEL_EMBEDDING_API_KEY: 'literal-key' } }
+      }
+    });
+    const merged = JSON.parse(mergeVscodeMcpConfig(existing, '/abs/cli.js')) as {
+      servers: { 'local-code-intelligence': { env: Record<string, string> } };
+    };
+    expect(merged.servers['local-code-intelligence'].env.CODE_INTEL_EMBEDDING_API_KEY).toBe('literal-key');
+  });
+
   it('prefers stable VS Code but offers Insiders and VSCodium profiles per platform', () => {
     const support = join('/Users/dev', 'Library', 'Application Support');
     expect(vscodeUserDirCandidates({ platform: 'darwin', home: '/Users/dev' })).toEqual([

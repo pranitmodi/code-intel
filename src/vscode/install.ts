@@ -2,8 +2,8 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { resolveCliEntry } from '../editors/cliEntry.js';
-import { readTextIfExists, writeIfChanged } from '../editors/jsonc.js';
-import { WORKSPACE_FOLDER_ARG, upsertMcpServer } from '../editors/mcpConfig.js';
+import { isPlainObject, parseJsoncObject, readTextIfExists, setJsoncValue, writeIfChanged } from '../editors/jsonc.js';
+import { WORKSPACE_FOLDER_ARG, existingServerEnv, upsertMcpServer } from '../editors/mcpConfig.js';
 import {
   LOCAL_CODE_INTEL_INSTRUCTIONS,
   LOCAL_CODE_INTEL_INSTRUCTIONS_FILENAME
@@ -20,6 +20,37 @@ export interface VscodeUserDirOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+export interface PromptStringInput {
+  type: 'promptString';
+  id: string;
+  description: string;
+  password?: boolean;
+}
+
+/**
+ * VS Code has no place to keep secrets in a config file, so credentials are
+ * collected once through `inputs` prompts and stored by the editor instead.
+ */
+export const EMBEDDING_CREDENTIAL_INPUTS: Array<{ envVar: string; input: PromptStringInput }> = [
+  {
+    envVar: 'CODE_INTEL_EMBEDDING_API_KEY',
+    input: {
+      type: 'promptString',
+      id: 'code-intel-embedding-api-key',
+      description: 'code-intel: embedding API key',
+      password: true
+    }
+  },
+  {
+    envVar: 'CODE_INTEL_EMBEDDING_USER',
+    input: {
+      type: 'promptString',
+      id: 'code-intel-embedding-user',
+      description: 'code-intel: embedding user name (leave blank if the endpoint does not need one)'
+    }
+  }
+];
+
 export interface VscodeInstallOptions extends VscodeUserDirOptions {
   /** `user` writes the VS Code profile; `workspace` writes `.vscode/` and `.github/` in the repo. */
   scope?: VscodeInstallScope;
@@ -29,6 +60,8 @@ export interface VscodeInstallOptions extends VscodeUserDirOptions {
   workspaceRoot?: string;
   cliPath?: string;
   serverEnv?: Record<string, string>;
+  /** Collect embedding credentials through VS Code prompts instead of plain text. */
+  promptForCredentials?: boolean;
 }
 
 export interface VscodeInstallResult {
@@ -37,6 +70,8 @@ export interface VscodeInstallResult {
   instructionPaths: string[];
   cliPath: string;
   createdMcp: boolean;
+  /** Environment variables VS Code will now prompt for on first start. */
+  promptedFor: string[];
 }
 
 function vscodeConfigBase(options: VscodeUserDirOptions): string {
@@ -95,6 +130,29 @@ export function mergeVscodeMcpConfig(
   });
 }
 
+/**
+ * Credential variables this config does not set yet, mapped to the prompt VS
+ * Code should ask for. Values a user already wrote are left alone.
+ */
+function credentialEnvFor(existingRaw: string | undefined): Record<string, string> {
+  const already = existingServerEnv(existingRaw, 'servers');
+  const missing = EMBEDDING_CREDENTIAL_INPUTS.filter(({ envVar }) => !already[envVar]);
+  return Object.fromEntries(missing.map(({ envVar, input }) => [envVar, `\${input:${input.id}}`]));
+}
+
+/** Add prompt definitions for `${input:…}` references, keeping any that exist. */
+function upsertPromptInputs(text: string, inputs: PromptStringInput[]): string {
+  if (inputs.length === 0) return text;
+  const doc = parseJsoncObject(text, (reason) => `Cannot add credential prompts (${reason}).`);
+  const existing = Array.isArray(doc.value.inputs) ? doc.value.inputs : [];
+  const ids = new Set(
+    existing.filter(isPlainObject).map((entry) => (typeof entry.id === 'string' ? entry.id : undefined))
+  );
+  const added = inputs.filter((input) => !ids.has(input.id));
+  if (added.length === 0) return text;
+  return setJsoncValue(doc.text, ['inputs'], [...existing, ...added]);
+}
+
 interface VscodeTargets {
   mcpPath: string;
   instructionPaths: string[];
@@ -133,12 +191,21 @@ export function installVscodeIntegration(options: VscodeInstallOptions = {}): Vs
 
   const createdMcp = !existsSync(mcpPath);
   const previousMcp = readTextIfExists(mcpPath);
-  const mcp = mergeVscodeMcpConfig(previousMcp, cliPath, {
-    serverEnv: options.serverEnv,
+  const credentialEnv = options.promptForCredentials ? credentialEnvFor(previousMcp) : {};
+  const serverEnv = { ...options.serverEnv, ...credentialEnv };
+  const merged = mergeVscodeMcpConfig(previousMcp, cliPath, {
+    ...(Object.keys(serverEnv).length > 0 ? { serverEnv } : {}),
     configPath: mcpPath
   });
+  const promptedFor = Object.keys(credentialEnv);
+  const mcp = upsertPromptInputs(
+    merged,
+    EMBEDDING_CREDENTIAL_INPUTS.filter(({ envVar }) => promptedFor.includes(envVar)).map(
+      ({ input }) => input
+    )
+  );
   writeIfChanged(mcpPath, mcp, previousMcp);
   for (const path of instructionPaths) writeIfChanged(path, LOCAL_CODE_INTEL_INSTRUCTIONS);
 
-  return { scope, mcpPath, instructionPaths, cliPath, createdMcp };
+  return { scope, mcpPath, instructionPaths, cliPath, createdMcp, promptedFor };
 }

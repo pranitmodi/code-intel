@@ -113,6 +113,30 @@ describe('MCP workspace resolution and watcher refresh', () => {
     });
   }
 
+  // An empty VS Code window leaves ${workspaceFolder} unexpanded, which used to
+  // abort the process before any tool could be served.
+  for (const [label, args] of [
+    ['bare flag', ['mcp', '--repo', '--no-watch']],
+    ['unexpanded variable', ['mcp', '--repo', '${workspaceFolder}', '--no-watch']]
+  ] as const) {
+    it(`starts without a usable --repo (${label})`, async () => {
+      const child = spawn(process.execPath, ['--import', 'tsx', CLI_SOURCE, ...args], {
+        env: { ...process.env, CODE_INTEL_EMBEDDING_HOST: 'http://127.0.0.1:9' },
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+      let stderr = '';
+      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+      const exited = new Promise<number | null>((resolve) => child.once('exit', (code) => resolve(code)));
+      try {
+        await waitFor(() => stderr.includes('running on stdio'), `server started (${stderr})`, 20_000);
+        expect(stderr).toContain('--repo did not receive a folder path');
+      } finally {
+        child.kill('SIGKILL');
+        await exited;
+      }
+    });
+  }
+
   it('starts watching a repo indexed after startup and stops once it is removed', async () => {
     const repoRoot = join(root, 'late');
     await mkdir(repoRoot, { recursive: true });

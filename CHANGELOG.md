@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-24
+
+### Fixed
+
+- The MCP server no longer exits with `option '--repo <path>' argument missing` when an editor passes `--repo` without a path. VS Code leaves `${workspaceFolder}` unexpanded in a window with no folder open, and in multi-root workspaces. The server now starts, logs one warning, and falls back to the current folder; tool calls that name a `repo` keep working.
+
+### Added
+
+- `code-intel vscode-install` wires VS Code `${input:…}` prompts for `CODE_INTEL_EMBEDDING_API_KEY` and `CODE_INTEL_EMBEDDING_USER` when the provider is OpenAI-compatible, so VS Code collects them once into its own secret storage instead of holding them in `mcp.json`. Values already present are left alone, and reruns do not duplicate the prompts.
+- `code-intel vscode-install` adds the system-CA environment when the configured provider needs it, matching what `setup --vscode` already did.
+
+### Changed
+
+- Editor installers print what VS Code will prompt for and remind you to open a single folder so `${workspaceFolder}` resolves.
+- README documents the VS Code path next to the Cursor one: a one-command setup (`code-intel onboard --vscode --no-cursor`), how credentials are prompted, and troubleshooting for the unexpanded workspace variable.
+
 ## [0.3.0] - 2026-09-23
 
 VS Code and GitHub Copilot support, reliable auto-indexing, and smaller answers. On the labeled benchmark, `get_task_context` sends 41% fewer tokens than 0.2.0 at the same Recall@10 (0.96), precision@5 rises from 0.30 to 0.43, and always-on agent guidance in Cursor drops from about 945 to 465 tokens. See [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
@@ -84,7 +100,8 @@ VS Code and GitHub Copilot support, reliable auto-indexing, and smaller answers.
 - Initial public npm release.
 - Structural chunking, local LanceDB storage, incremental indexing, hybrid search, MCP tools, and file watching.
 
-[Unreleased]: https://github.com/pranitmodi/code-intel/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/pranitmodi/code-intel/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/pranitmodi/code-intel/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/pranitmodi/code-intel/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/pranitmodi/code-intel/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/pranitmodi/code-intel/releases/tag/v0.1.1

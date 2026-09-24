@@ -28,6 +28,25 @@ export function mergeServerEnv(
   return merged;
 }
 
+/** Environment already configured for this server in an editor config file. */
+export function existingServerEnv(
+  existingRaw: string | undefined,
+  containerKey: string
+): Record<string, string> {
+  if (!existingRaw?.trim()) return {};
+  let doc;
+  try {
+    doc = parseJsoncObject(existingRaw, (reason) => reason);
+  } catch {
+    return {};
+  }
+  const container = doc.value[containerKey];
+  if (!isPlainObject(container)) return {};
+  const server = container[MCP_SERVER_NAME];
+  if (!isPlainObject(server)) return {};
+  return plainObjectAt(server, 'env') as Record<string, string>;
+}
+
 export interface UpsertMcpServerOptions {
   /** `mcpServers` for Cursor, `servers` for VS Code. */
   containerKey: string;
