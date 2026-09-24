@@ -58,6 +58,10 @@ export interface VscodeInstallOptions extends VscodeUserDirOptions {
   userDir?: string;
   /** Repository root that receives the config (workspace scope). */
   workspaceRoot?: string;
+  /** Absolute repository or parent folder the user-scoped server should cover. */
+  repoPath?: string;
+  /** Node executable used by VS Code; defaults to this process, avoiding GUI PATH differences. */
+  nodePath?: string;
   cliPath?: string;
   serverEnv?: Record<string, string>;
   /** Collect embedding credentials through VS Code prompts instead of plain text. */
@@ -69,6 +73,8 @@ export interface VscodeInstallResult {
   mcpPath: string;
   instructionPaths: string[];
   cliPath: string;
+  nodePath: string;
+  repoArgument: string;
   createdMcp: boolean;
   /** Environment variables VS Code will now prompt for on first start. */
   promptedFor: string[];
@@ -102,12 +108,13 @@ export function resolveVscodeUserDir(options: VscodeUserDirOptions = {}): string
  */
 export function vscodeMcpServerEntry(
   cliPath: string,
-  env?: Record<string, string>
+  env?: Record<string, string>,
+  options: { nodePath?: string; repoArgument?: string } = {}
 ): { type: 'stdio'; command: string; args: string[]; env?: Record<string, string> } {
   return {
     type: 'stdio',
-    command: 'node',
-    args: [cliPath, 'mcp', '--repo', WORKSPACE_FOLDER_ARG],
+    command: options.nodePath ?? process.execPath,
+    args: [cliPath, 'mcp', '--repo', options.repoArgument ?? WORKSPACE_FOLDER_ARG],
     ...(env && Object.keys(env).length > 0 ? { env } : {})
   };
 }
@@ -119,11 +126,20 @@ export function vscodeMcpServerEntry(
 export function mergeVscodeMcpConfig(
   existingRaw: string | undefined,
   cliPath: string,
-  options: { serverEnv?: Record<string, string>; configPath?: string } = {}
+  options: {
+    serverEnv?: Record<string, string>;
+    configPath?: string;
+    nodePath?: string;
+    repoArgument?: string;
+  } = {}
 ): string {
   return upsertMcpServer(existingRaw, {
     containerKey: 'servers',
-    entry: (env) => vscodeMcpServerEntry(cliPath, env),
+    entry: (env) =>
+      vscodeMcpServerEntry(cliPath, env, {
+        nodePath: options.nodePath,
+        repoArgument: options.repoArgument
+      }),
     serverEnv: options.serverEnv,
     label: options.configPath ?? 'the VS Code mcp.json',
     command: 'vscode-install'
@@ -182,7 +198,13 @@ function userTargets(userDir: string, home: string): VscodeTargets {
 export function installVscodeIntegration(options: VscodeInstallOptions = {}): VscodeInstallResult {
   const scope = options.scope ?? 'user';
   const cliPath = options.cliPath ?? resolveCliEntry();
+  const nodePath = options.nodePath ?? process.execPath;
   const home = options.home ?? homedir();
+  // User-level config may be launched from empty or multi-root windows where
+  // VS Code refuses to expand ${workspaceFolder}. Capture the install folder.
+  // Workspace config keeps the variable so a committed file remains portable.
+  const repoArgument =
+    scope === 'user' ? resolve(options.repoPath ?? options.workspaceRoot ?? process.cwd()) : WORKSPACE_FOLDER_ARG;
 
   const { mcpPath, instructionPaths } =
     scope === 'workspace'
@@ -195,7 +217,9 @@ export function installVscodeIntegration(options: VscodeInstallOptions = {}): Vs
   const serverEnv = { ...options.serverEnv, ...credentialEnv };
   const merged = mergeVscodeMcpConfig(previousMcp, cliPath, {
     ...(Object.keys(serverEnv).length > 0 ? { serverEnv } : {}),
-    configPath: mcpPath
+    configPath: mcpPath,
+    nodePath,
+    repoArgument
   });
   const promptedFor = Object.keys(credentialEnv);
   const mcp = upsertPromptInputs(
@@ -207,5 +231,14 @@ export function installVscodeIntegration(options: VscodeInstallOptions = {}): Vs
   writeIfChanged(mcpPath, mcp, previousMcp);
   for (const path of instructionPaths) writeIfChanged(path, LOCAL_CODE_INTEL_INSTRUCTIONS);
 
-  return { scope, mcpPath, instructionPaths, cliPath, createdMcp, promptedFor };
+  return {
+    scope,
+    mcpPath,
+    instructionPaths,
+    cliPath,
+    nodePath,
+    repoArgument,
+    createdMcp,
+    promptedFor
+  };
 }

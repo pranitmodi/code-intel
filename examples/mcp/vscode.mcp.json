@@ -2,8 +2,13 @@
   "servers": {
     "local-code-intelligence": {
       "type": "stdio",
-      "command": "code-intel",
-      "args": ["mcp", "--repo", "${workspaceFolder}"]
+      "command": "/absolute/path/to/node",
+      "args": [
+        "/absolute/path/to/node_modules/@pranitmodi/code-intel/dist/cli/index.js",
+        "mcp",
+        "--repo",
+        "/absolute/path/to/repository-or-parent"
+      ]
     }
   }
 }

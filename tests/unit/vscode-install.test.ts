@@ -29,7 +29,7 @@ describe('vscode-install', () => {
     expect(merged.servers.other).toEqual({ type: 'stdio', command: 'echo', args: ['hi'] });
     expect(merged.servers['local-code-intelligence']).toEqual({
       type: 'stdio',
-      command: 'node',
+      command: process.execPath,
       args: ['/abs/cli.js', 'mcp', '--repo', '${workspaceFolder}']
     });
   });
@@ -49,7 +49,7 @@ describe('vscode-install', () => {
       })
     ) as { servers: { 'local-code-intelligence': { command: string; env: Record<string, string> } } };
     const server = merged.servers['local-code-intelligence'];
-    expect(server.command).toBe('node');
+    expect(server.command).toBe(process.execPath);
     expect(server.env.COMPANY_PROXY).toBe('enabled');
     expect(server.env.NODE_USE_SYSTEM_CA).toBe('1');
     expect(server.env.NODE_OPTIONS).toBe('--enable-source-maps --use-system-ca');
@@ -64,17 +64,34 @@ describe('vscode-install', () => {
   it('writes the user profile mcp.json and both instruction locations', async () => {
     home = await mkdtemp(join(tmpdir(), 'code-intel-vscode-'));
     const userDir = join(home, 'Code', 'User');
-    const result = installVscodeIntegration({ home, userDir, cliPath: '/abs/cli.js' });
+    const parent = join(home, 'work', 'multi-root parent');
+    const result = installVscodeIntegration({
+      home,
+      userDir,
+      cliPath: '/abs/cli.js',
+      repoPath: parent,
+      nodePath: '/abs/node'
+    });
 
     expect(result.mcpPath).toBe(join(userDir, 'mcp.json'));
     const mcp = JSON.parse(await readFile(result.mcpPath, 'utf-8')) as {
-      servers: { 'local-code-intelligence': { type: string; command: string } };
+      servers: {
+        'local-code-intelligence': { type: string; command: string; args: string[] };
+      };
     };
     expect(mcp.servers['local-code-intelligence'].type).toBe('stdio');
+    expect(mcp.servers['local-code-intelligence'].command).toBe('/abs/node');
+    expect(mcp.servers['local-code-intelligence'].args).toEqual([
+      '/abs/cli.js',
+      'mcp',
+      '--repo',
+      parent
+    ]);
     expect(result.instructionPaths).toEqual([
       join(userDir, 'prompts', LOCAL_CODE_INTEL_INSTRUCTIONS_FILENAME),
       join(home, '.copilot', 'instructions', LOCAL_CODE_INTEL_INSTRUCTIONS_FILENAME)
     ]);
+    expect(result.repoArgument).toBe(parent);
     for (const path of result.instructionPaths) {
       const instructions = await readFile(path, 'utf-8');
       expect(instructions).toContain("applyTo: '**'");
@@ -94,7 +111,10 @@ describe('vscode-install', () => {
     expect(result.instructionPaths).toEqual([
       join(home, '.github', 'instructions', LOCAL_CODE_INTEL_INSTRUCTIONS_FILENAME)
     ]);
-    expect(await readFile(result.mcpPath, 'utf-8')).toContain('"servers"');
+    const mcp = JSON.parse(await readFile(result.mcpPath, 'utf-8')) as {
+      servers: { 'local-code-intelligence': { args: string[] } };
+    };
+    expect(mcp.servers['local-code-intelligence'].args.at(-1)).toBe('${workspaceFolder}');
   });
 
   it('asks VS Code to prompt for embedding credentials instead of storing them', async () => {

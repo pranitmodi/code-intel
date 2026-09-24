@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-24
+
+### Fixed
+
+- VS Code user-profile installs no longer depend on the GUI process inheriting nvm's `PATH`. The generated MCP entry uses absolute paths for the running Node executable and the package's CLI entry point.
+- VS Code empty and multi-root windows no longer fail before the MCP process starts because `${workspaceFolder}` cannot be resolved. The user-profile installer records the repository or parent folder from which onboarding ran; parent folders continue to serve every indexed child repository.
+- The checked-in VS Code example no longer recommends the fragile bare `code-intel` command.
+
+### Changed
+
+- `code-intel vscode-install` reports the exact Node and repository paths written to `mcp.json`.
+- `--workspace` remains portable and committable by using `${workspaceFolder}` and is documented as single-folder only.
+- The README now documents multi-root setup from a common parent and the nvm/GUI PATH failure mode.
+
 ## [0.3.1] - 2026-09-24
 
 ### Fixed
@@ -100,7 +114,8 @@ VS Code and GitHub Copilot support, reliable auto-indexing, and smaller answers.
 - Initial public npm release.
 - Structural chunking, local LanceDB storage, incremental indexing, hybrid search, MCP tools, and file watching.
 
-[Unreleased]: https://github.com/pranitmodi/code-intel/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/pranitmodi/code-intel/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/pranitmodi/code-intel/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/pranitmodi/code-intel/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/pranitmodi/code-intel/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/pranitmodi/code-intel/compare/v0.1.1...v0.2.0

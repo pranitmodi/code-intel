@@ -40,7 +40,7 @@ describe('editor config edge cases', () => {
     expect(merged).toContain('/* team server */');
     const doc = parseJsonc(merged) as McpDoc & { inputs: unknown[] };
     expect(doc.servers.github).toEqual({ type: 'http', url: 'https://example.com/mcp' });
-    expect(doc.servers[SERVER]).toMatchObject({ type: 'stdio', command: 'node' });
+    expect(doc.servers[SERVER]).toMatchObject({ type: 'stdio', command: process.execPath });
     expect(doc.inputs).toEqual([]);
   });
 
@@ -71,7 +71,11 @@ describe('editor config edge cases', () => {
       servers: { [SERVER]: { type: 'stdio', command: 'old', disabled: false, envFile: '${workspaceFolder}/.env' } }
     });
     const server = (JSON.parse(mergeVscodeMcpConfig(existing, '/abs/cli.js')) as McpDoc).servers[SERVER];
-    expect(server).toMatchObject({ command: 'node', disabled: false, envFile: '${workspaceFolder}/.env' });
+    expect(server).toMatchObject({
+      command: process.execPath,
+      disabled: false,
+      envFile: '${workspaceFolder}/.env'
+    });
   });
 
   it('preserves tab indentation and CRLF line endings', () => {

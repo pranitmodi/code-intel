@@ -50,7 +50,7 @@ code-intel onboard --vscode               # both
 
 Each command pulls the embedding model if it is missing, indexes the repository, and wires the editor: the MCP server plus the instructions that tell the agent to retrieve before it searches.
 
-Then reload the editor. In VS Code, open the repository with **File → Open Folder** and check **MCP: List Servers**. In Cursor, reload MCP under **Settings → MCP**. From then on, the agent calls `get_task_context` before touching files, and new or edited code is indexed automatically.
+Then reload the editor. In VS Code, check **MCP: List Servers**. In Cursor, reload MCP under **Settings → MCP**. From then on, the agent calls `get_task_context` before touching files, and new or edited code is indexed automatically.
 
 Without a global install: `npx -y @pranitmodi/code-intel onboard --repo /path/to/your-project`.
 
@@ -98,10 +98,18 @@ code-intel vscode-install --workspace  # this repository only (.vscode/mcp.json)
 
 This merges VS Code's `mcp.json`, keeping other servers and comments, and writes an always-applied Copilot instructions file that tells Copilot to retrieve before it searches. Stable, Insiders, and VSCodium are detected; use `--user-dir` to override. VS Code has no hooks, so the instructions file does the steering.
 
-Two differences from Cursor worth knowing:
+The user-level installer writes absolute paths for Node, the CLI entry point, and the current repository (or parent folder). This is deliberate: GUI apps often do not inherit nvm's shell `PATH`, and VS Code cannot expand `${workspaceFolder}` in an empty or multi-root window. To cover a multi-root workspace, run the installer from the common parent:
 
-- **Open one folder.** VS Code expands `${workspaceFolder}` only when the window has a single folder open. An empty window or a multi-root `.code-workspace` leaves it unset; the server still starts, but it has no default repository, so each tool call has to name one with `repo`.
-- **Credentials are prompted, not stored.** When the embedding provider is OpenAI-compatible, the installer wires `${input:…}` prompts, so VS Code asks for the key once and keeps it in its own secret storage rather than in `mcp.json`. Leave the user-name prompt blank if your endpoint doesn't need one.
+```bash
+cd "/path/to/parent containing the repositories"
+code-intel vscode-install
+```
+
+code-intel detects and watches every indexed child repository under that parent. Each tool can select one by path, id, or name with its `repo` argument.
+
+When the embedding provider is OpenAI-compatible, the installer wires `${input:…}` prompts, so VS Code asks for the key once and keeps it in its own secret storage rather than in `mcp.json`. Leave the user-name prompt blank if your endpoint doesn't need one.
+
+`--workspace` is the portable, committable alternative. It writes `.vscode/mcp.json` with `${workspaceFolder}`; use it only for a single-folder workspace.
 
 Confirm the result with **MCP: List Servers**. A hand-written entry looks like this ([example](examples/mcp/vscode.mcp.json)); `type` is required or VS Code skips the entry:
 
@@ -110,12 +118,19 @@ Confirm the result with **MCP: List Servers**. A hand-written entry looks like t
   "servers": {
     "local-code-intelligence": {
       "type": "stdio",
-      "command": "code-intel",
-      "args": ["mcp", "--repo", "${workspaceFolder}"]
+      "command": "/absolute/path/to/node",
+      "args": [
+        "/absolute/path/to/node_modules/@pranitmodi/code-intel/dist/cli/index.js",
+        "mcp",
+        "--repo",
+        "/absolute/path/to/repository-or-parent"
+      ]
     }
   }
 }
 ```
+
+Prefer `code-intel vscode-install` to writing this by hand. Do not use a bare `"command": "code-intel"` with an nvm install: VS Code's GUI process may not have that command on `PATH`.
 
 ### Other MCP clients
 
@@ -270,7 +285,8 @@ Environment variables: `CODE_INTEL_EMBEDDING_PROVIDER`, `CODE_INTEL_EMBEDDING_MO
 - **Anything odd:** `code-intel doctor` checks the provider, model, credentials, and index storage.
 - **"Model not found":** `ollama pull <model>` for the configured `embedding.model`, or `code-intel doctor --fix`.
 - **Tools missing in the editor:** reload the MCP server list and read the server's stderr in the editor's MCP log.
-- **VS Code: no default repository, or a warning that `--repo` got no path:** the window has no folder open, or it is a multi-root workspace where `${workspaceFolder}` does not expand. Open the repository with **File → Open Folder**, use `${workspaceFolder:<name>}` for one root of a multi-root workspace, or put an absolute path in `mcp.json`.
+- **VS Code: `Variable workspaceFolder can not be resolved`:** a hand-written or `--workspace` config is being used in an empty or multi-root window. Run `code-intel vscode-install` from the repository (or the common parent of indexed repositories); the user-level installer writes an absolute path.
+- **VS Code: `Cannot find module .../mcp` or `code-intel` is not found:** the config is using a bare command that the GUI cannot resolve through nvm. Re-run `code-intel vscode-install`; it writes absolute paths to Node and the CLI.
 - **VS Code: embedding calls fail with 401 or 403:** the saved answer to a `${input:…}` prompt is wrong. Clear the stored inputs from the server's entry in **MCP: List Servers** and start it again, or replace the `${input:…}` values in `mcp.json` with variables your company environment already provides.
 - **Recent edits not in results:** `code-intel status` (or the `index_status` tool) shows staleness and the last watcher error. `[WATCH]` lines in the MCP log list the watched repositories.
 - **Proxy authentication failures:** set `CODE_INTEL_EMBEDDING_API_KEY` (and `CODE_INTEL_EMBEDDING_USER` if the endpoint needs it) in both your shell and the MCP server's `env`.

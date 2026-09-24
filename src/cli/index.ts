@@ -256,8 +256,9 @@ function reportVscodeInstall(result: VscodeInstallResult): void {
   if (result.promptedFor.length > 0) {
     console.log(`VS Code will prompt for: ${result.promptedFor.join(', ')}`);
   }
+  console.log(`MCP Node: ${result.nodePath}`);
+  console.log(`MCP repo: ${result.repoArgument}`);
   console.log('Reload the VS Code window, then check MCP: List Servers.');
-  console.log('Open the repository with File → Open Folder so ${workspaceFolder} resolves.');
 }
 
 function wireEditors(options: EditorWiringOptions): void {
@@ -269,7 +270,11 @@ function wireEditors(options: EditorWiringOptions): void {
   }
   if (options.vscode) {
     reportVscodeInstall(
-      installVscodeIntegration({ ...installOptions, promptForCredentials: needsCredentialPrompts() })
+      installVscodeIntegration({
+        ...installOptions,
+        repoPath: resolveRepoRoot(),
+        promptForCredentials: needsCredentialPrompts()
+      })
     );
   }
 }
@@ -831,6 +836,7 @@ program
       promptForCredentials: config.embedding.provider === 'openai-compatible',
       ...(config.embedding.useSystemCa ? { serverEnv: cursorSystemCaEnv() } : {}),
       ...(options.userDir ? { userDir: resolve(options.userDir) } : {}),
+      ...(scope === 'user' ? { repoPath: resolveRepoRoot() } : {}),
       ...(scope === 'workspace' ? { workspaceRoot: resolveRepoRoot() } : {})
     });
     reportVscodeInstall(result);
