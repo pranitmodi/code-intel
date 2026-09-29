@@ -75,8 +75,7 @@ flowchart LR
 
 **Read path:** embed the task, combine vector, keyword, symbol, and file-name matches, and expand to imports, references, tests, and configuration. Then remove near-duplicates and padding, and pack the rest under a token budget with a confidence score.
 
-Details: [architecture](docs/ARCHITECTURE.md), [benchmarks](docs/BENCHMARKS.md),
-[project status and roadmap](docs/PROJECT_STATUS_AND_ROADMAP.md), and
+Details: [architecture](docs/ARCHITECTURE.md), [benchmarks](docs/BENCHMARKS.md), and
 [security model](SECURITY.md).
 
 ## Editor setup

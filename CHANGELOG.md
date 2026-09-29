@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## [0.4.0] - 2026-09-29
 
+Removed the internal design specs (`docs/history/`) and the status/roadmap document; the maintained docs are the README, `docs/ARCHITECTURE.md`, and `docs/BENCHMARKS.md`.
+
 Cheaper and faster whole agent sessions, not just smaller first replies. A September A/B test found the first `get_task_context` reply was small but missed 8 of 10 key files for a multi-part question. The agent then spent more tokens on follow-up calls than a filesystem-only agent. This release fixes the causes found in the code.
 
 ### Changed
