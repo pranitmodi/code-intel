@@ -3,14 +3,47 @@ import { normalizeVector } from '../embeddings/vectorMath.js';
 import type { SearchConfig } from '../config/types.js';
 import type { LanceVectorStore } from '../vector-store/LanceVectorStore.js';
 import type { ChunkSearchResult } from '../vector-store/schema.js';
-import { candidateFromRecord } from './score.js';
-import { mergeCandidates, selectCandidates, type SelectResult } from './select.js';
+import { candidateFromRecord, type QueryNaming } from './score.js';
+import { compareCandidates, mergeCandidates, selectCandidates, type SelectResult } from './select.js';
 import type { RetrievalCandidate, RetrievalTrace } from './types.js';
 
 const embedCache = new Map<string, number[]>();
 const EMBED_CACHE_LIMIT = 64;
 
+/**
+ * Embed several queries with one provider call for those not already cached.
+ * A multi-part task embeds its facets together, so it waits for one round
+ * trip to a remote endpoint, not one per facet.
+ */
+export async function embedQueries(texts: string[], embeddingProvider: EmbeddingProvider): Promise<number[][]> {
+  const model = embeddingProvider.modelName();
+  const found = new Map<string, number[]>();
+  for (const text of texts) {
+    const cached = embedCache.get(`${model}:${text}`);
+    if (cached) found.set(text, cached);
+  }
+  const missing = [...new Set(texts.filter((text) => !found.has(text)))];
+  if (missing.length > 0) {
+    const vectors = await embeddingProvider.embedBatch(missing);
+    missing.forEach((text, i) => {
+      const vector = vectors[i];
+      if (!vector) return;
+      const normalized = normalizeVector(vector);
+      found.set(text, normalized);
+      embedCache.set(`${model}:${text}`, normalized);
+    });
+    while (embedCache.size > EMBED_CACHE_LIMIT) {
+      const first = embedCache.keys().next().value;
+      if (first === undefined) break;
+      embedCache.delete(first);
+    }
+  }
+  return texts.map((text) => found.get(text) ?? []);
+}
+
 export interface HybridSearchOptions {
+  /** Specific file-name words for this repo; see `QueryNaming`. */
+  naming?: QueryNaming;
   limit?: number;
   minScore?: number;
   maxTokens?: number;
@@ -68,7 +101,8 @@ export async function hybridSearch(
         record,
         { semantic: similarity, keyword: 0, sources: ['semantic'], reason: 'semantic similarity' },
         weights,
-        queryLower
+        queryLower,
+        options.naming
       )
     );
   }
@@ -80,13 +114,14 @@ export async function hybridSearch(
       record,
       { semantic: 0, keyword: normalized, sources: ['keyword'], reason: 'keyword match' },
       weights,
-      queryLower
+      queryLower,
+      options.naming
     );
     const existing = combined.get(record.id);
     combined.set(record.id, existing ? mergeCandidates(existing, incoming) : incoming);
   }
 
-  const allCandidates = [...combined.values()].sort((a, b) => b.score.total - a.score.total);
+  const allCandidates = [...combined.values()].sort(compareCandidates);
   const packed = selectCandidates(allCandidates, {
     limit,
     maxTokens: options.maxTokens,

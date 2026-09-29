@@ -92,7 +92,24 @@ Tree-sitter creates symbol-aware chunks for:
 - Go
 - Bash
 
-Other detected languages use bounded text windows. Every chunk records file path, language, symbol identity when available, line range, content hashes, embedding, and lightweight metadata such as imports, exports, referenced identifiers, test status, and configuration status.
+Other detected languages use bounded text windows.
+
+The structural chunker (`src/chunker/structural.ts`) walks each file's top-level statements, so every line except imports lands in exactly one chunk:
+
+- **Declarations:** functions, classes, interfaces, types, enums, `const` arrow functions, and large constants or schemas. Each keeps its leading doc comment and `export`.
+- **Classes:** a header chunk (declaration and fields, plus a `defines` list of members with line ranges) and one chunk per method, so method text is never stored twice.
+- **Registrations:** `program.command('x')`, `server.registerTool('x')`, and routes become `command` chunks named by the string.
+- **Tests:** `describe`/`it` calls become `test` chunks named by title.
+- **Everything else:** grouped into `block` chunks.
+- **Oversized functions:** split at statement boundaries, with registrations in their bodies split out.
+
+Every chunk records:
+
+- file path, language, symbol identity when available, and line range;
+- content hashes and the embedding;
+- lightweight metadata: imports, exports, referenced identifiers, test and configuration status, and, from the syntax tree, the signature, called names, and code-shaped string literals (commands, flags, env keys).
+
+`CHUNKER_VERSION` in `src/chunker/version.ts` triggers a one-time re-chunk when these rules change. Embeddings are reused wherever chunk text is unchanged.
 
 Files larger than the safety cap, binary files, ignored paths, and likely secrets are skipped. Oversized symbols are split before embedding.
 
@@ -127,6 +144,16 @@ Exact matches get score floors, so a definition is not buried under vaguely simi
 
 Prose (Markdown, reStructuredText, plain text, README, CHANGELOG) keeps full weight for documentation questions, gets 0.85 for "how/why/explain" questions, and 0.7 for "where/fix/add" work. It never receives exact-match floors unless the question is about docs.
 
+A request that lists several things is split into facets deterministically (`src/retrieval/facets.ts`). Clauses and list items become facets; commands, flags, env keys, identifiers, and file names anchor them; "versus" and "/" keep both sides in one facet. For such a request:
+
+- **Retrieval.** Each facet gets its own semantic, keyword, and file-name search. The task and all facets are embedded in one provider call.
+- **Relevance.** A chunk's relevance to a facet (`src/retrieval/coverage.ts`) is 1 for an exact anchor match. Otherwise it is half the facet's words the chunk contains, weighted by rarity among the candidates, and half its rank in the facet's own search. It never depends on a model's similarity scale.
+- **Selection.** A greedy budgeted-coverage pick takes whichever chunk adds the most uncovered facet weight per unit of cost, so every part gets evidence before any part gets a second chunk.
+- **Coverage and confidence.** Each facet is reported `covered`, `weak`, or `missing`; the reply is `complete` when no part is missing and weak parts carry little weight. The confidence score is the covered share.
+- **Follow-ups.** The best unsent chunks for weak or missing parts become the reply's `Next` reads.
+
+A focused request keeps the single-query pipeline below unchanged.
+
 `get_task_context` then:
 
 1. Generates and merges candidates, including files whose names match the task or a configuration concept.
@@ -137,7 +164,25 @@ Prose (Markdown, reStructuredText, plain text, README, CHANGELOG) keeps full wei
 6. Stops early. A definition lookup ("where is `X`") with an exact symbol match returns only exact matches. Otherwise results end at the first score gap of 0.15 or more once two non-exact files are kept. Exact matches are never cut.
 7. Packs chunks under the token budget (normal mode: 8,000 tokens).
 
-The MCP server returns a compact JSON payload: repository, confidence, token estimate, and for each file its path, reason, one score, and chunks, plus relationships between files that were sent. The score breakdown and retrieval trace stay available through `code-intel context --explain`. The benchmarks count this exact payload.
+**Reply format.** By default the MCP server replies in plain text:
+
+- a manifest line (repo name, `ctx`, coverage or confidence, token estimate);
+- one line per facet with references to the blocks that cover it;
+- at most three exact `Next` calls when incomplete;
+- `### [n] path:start-end symbol` blocks of raw code.
+
+There are no absolute paths, per-signal scores, or timestamps, so identical retrievals give identical bytes. `CODE_INTEL_MCP_FORMAT=json` returns the compact JSON payload instead. The score breakdown and retrieval trace stay available through `code-intel context --explain`. The benchmarks count the exact reply.
+
+**Conversation contexts.** Each reply names a `ctx` (`src/mcp/session.ts`). Later calls in the same conversation that pass it back replace unchanged code already sent with a one-line note:
+
+- `get_task_context`, `get_file_context`, and `search_codebase` all accept it.
+- Lines are compared by hash, so edited code is resent.
+- An exact re-request of a range is answered in full, in case the client dropped it from context.
+- Contexts are keyed by id rather than by process, because Cursor and VS Code serve several chats from one server.
+
+**File ranges.** `get_file_context` reads batched `ranges`. It caps each range and each call, and names what it left out.
+
+**Freshness.** Staleness comes from the live watcher, or from a cached check that never delays a reply by more than 150 ms. No tool call walks the working tree.
 
 If the index is stale, results are empty, confidence is below the threshold, or a code-change query ranks documentation first, the answer says so and the Cursor hook temporarily permits repository-wide filesystem search.
 
@@ -192,6 +237,9 @@ The repository ID is derived from its canonical absolute path. Index state recor
 - TypeScript aliases are loaded from root `tsconfig.json` or `jsconfig.json`; project references and framework-specific resolvers may need targeted filesystem fallback.
 - Python import expansion is path-based and does not execute package resolution.
 - Query quality benchmarks currently cover a small labeled TypeScript repository; they do not prove equal results on every language or monorepo.
+- Facet splitting is rule-based. A request written as one long sentence with no list structure stays a single facet.
+- Facet coverage judges relevance from word overlap and each facet's search ranking; it is not a semantic judgment of whether the code answers the part.
+- The session benchmark models follow-up turns; it does not yet drive live agents in Cursor, VS Code, or Claude Code.
 - The watcher is process-scoped, not a system daemon.
 
 ## Extension points

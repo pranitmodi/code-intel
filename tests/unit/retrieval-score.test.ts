@@ -110,6 +110,34 @@ describe('retrieval scoring', () => {
     expect(symbolMatchScore({ symbol_name: 'search', parent_symbol: null }, 'where is searchcodebase')).toBe(0);
   });
 
+  it('treats a one-word symbol matched by prose as partial evidence only', () => {
+    expect(symbolMatchScore({ symbol_name: 'User', parent_symbol: null }, 'user versus workspace installation')).toBe(0.5);
+    expect(symbolMatchScore({ symbol_name: 'User', parent_symbol: null }, 'where is user defined')).toBe(1);
+    expect(symbolMatchScore({ symbol_name: 'User', parent_symbol: null }, 'call `user` here')).toBe(1);
+    expect(
+      symbolMatchScore({ symbol_name: 'vscode-install', parent_symbol: null, symbol_type: 'test' }, 'how does vscode-install work')
+    ).toBe(0);
+    expect(symbolMatchScore({ symbol_name: 'vscode-install', parent_symbol: null, symbol_type: 'command' }, 'how does vscode-install work')).toBe(1);
+  });
+
+  it('keeps registrations and prose-joined names from outranking the definition they resemble', () => {
+    // The MCP tool named "search_codebase" is not what "searchCodebase" names.
+    expect(symbolMatchScore({ symbol_name: 'search_codebase', parent_symbol: 'buildServer', symbol_type: 'command' }, 'where is searchcodebase implemented?')).toBe(0.5);
+    expect(symbolMatchScore({ symbol_name: 'search_codebase', parent_symbol: 'buildServer', symbol_type: 'command' }, 'what does the search_codebase tool return?')).toBe(1);
+    // A one-word command is named only when written as a command, not as a prose word or a substring.
+    const savings = { symbol_name: 'savings', parent_symbol: null, symbol_type: 'command' };
+    expect(symbolMatchScore(savings, 'how are denied scans counted in the savings report?')).toBe(0.5);
+    expect(symbolMatchScore(savings, 'what does `code-intel savings` print?')).toBe(1);
+    expect(symbolMatchScore(savings, 'what does code-intel savings print?')).toBe(1);
+    expect(symbolMatchScore({ symbol_name: 'context', parent_symbol: null, symbol_type: 'command' }, 'add rate limiting around get_task_context')).toBeLessThan(1);
+    // "embedding model" joins to a local constant in a test, which is not a definition.
+    expect(
+      symbolMatchScore({ symbol_name: 'embeddingModel', parent_symbol: null, symbol_type: 'const', file_path: 'tests/integration/mcp.test.ts' }, 'where is the default embedding model?')
+    ).toBe(0.5);
+    expect(symbolMatchScore({ symbol_name: 'TaskContext', parent_symbol: null, symbol_type: 'class' }, 'where is the task context class')).toBe(1);
+    expect(symbolMatchScore({ symbol_name: 'getTaskContext', parent_symbol: null, symbol_type: 'function' }, 'wrap get_task_context')).toBe(1);
+  });
+
   it('down-weights prose for code tasks and withholds exact-match floors from it', () => {
     const doc = record({ file_path: 'docs/GUIDE.md', symbol_name: 'searchCodebase', symbol_type: 'heading' });
     const signals = { semantic: 0.8, keyword: 0.5, sources: ['semantic' as const], reason: 'semantic similarity' };

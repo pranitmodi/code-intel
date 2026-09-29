@@ -1,7 +1,8 @@
 import { resolve } from 'node:path';
 import { createLogger } from '../utils/logger.js';
-import { watchRepo, type WatchRepoOptions } from '../indexer/watch.js';
+import { watchRepo, type WatchHandle, type WatchRepoOptions } from '../indexer/watch.js';
 import { containingRepoPath, isSameOrInside } from '../indexer/registry.js';
+import { sharedFreshness, type FreshnessCache } from './freshness.js';
 import type { McpRuntime } from './runtime.js';
 
 const logger = createLogger('watch');
@@ -33,6 +34,8 @@ export function watchTargetsForWorkspace(
 export interface WorkspaceWatcherOptions {
   refreshMs?: number;
   watch?: WatchRepoOptions;
+  /** Receives each watcher's state so freshness checks need not walk the tree. */
+  freshness?: FreshnessCache;
 }
 
 /**
@@ -47,12 +50,15 @@ export async function startWorkspaceWatchers(
   options: WorkspaceWatcherOptions = {}
 ): Promise<() => Promise<void>> {
   const refreshMs = options.refreshMs ?? DEFAULT_REFRESH_MS;
-  const active = new Map<string, () => Promise<void>>();
+  const freshness = options.freshness ?? sharedFreshness;
+  /** Watched target path -> its watcher and the repo root it reports freshness for. */
+  const active = new Map<string, { stop: WatchHandle; repoRoot: string }>();
   const unopenable = new Set<string>();
   let stopped = false;
 
   const refresh = async (): Promise<void> => {
-    const repos = await runtime.listRepos();
+    // Registry only: a freshness check here would walk every indexed tree each refresh.
+    const repos = runtime.listRegistered();
     const targets = new Set(
       watchTargetsForWorkspace(
         runtime.defaultRepoRoot,
@@ -60,10 +66,11 @@ export async function startWorkspaceWatchers(
       )
     );
 
-    for (const [path, stop] of active) {
+    for (const [path, watched] of active) {
       if (targets.has(path)) continue;
       active.delete(path);
-      await stop();
+      freshness.unregisterWatcher(watched.repoRoot);
+      await watched.stop();
       runtime.evict(path);
       logger.info(`[WATCH] off for ${path} — no longer indexed`);
     }
@@ -78,7 +85,9 @@ export async function startWorkspaceWatchers(
       }
       unopenable.delete(path);
       try {
-        active.set(path, await watchRepo(resolved.context, { immediate: true, ...options.watch }));
+        const handle = await watchRepo(resolved.context, { immediate: true, ...options.watch });
+        active.set(path, { stop: handle, repoRoot: resolved.context.repoRoot });
+        freshness.registerWatcher(resolved.context.repoRoot, handle.snapshot);
         logger.info(`[WATCH] on for ${path}`);
       } catch (error) {
         logger.warn(`[WATCH] could not watch ${path}`, { error: describe(error) });
@@ -112,7 +121,8 @@ export async function startWorkspaceWatchers(
     stopped = true;
     clearInterval(interval);
     await pending;
-    await Promise.all([...active.values()].map((stop) => stop()));
+    for (const watched of active.values()) freshness.unregisterWatcher(watched.repoRoot);
+    await Promise.all([...active.values()].map((watched) => watched.stop()));
     active.clear();
   };
 }

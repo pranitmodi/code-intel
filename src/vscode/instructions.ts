@@ -9,12 +9,13 @@ export const LOCAL_CODE_INTEL_INSTRUCTIONS = [
   '',
   '# Use the local code index first',
   '',
-  'The `local-code-intelligence` MCP server already indexes this repository and keeps it current. Only your query is embedded; it returns ranked snippets within a token budget.',
+  'The `local-code-intelligence` MCP server indexes this repository and keeps it current. Its replies contain exact, current source.',
   '',
-  '1. `get_task_context` for a new or broad task.',
-  '2. `search_symbol` for a known name, `search_codebase` for a concept, `find_references` for occurrences.',
-  '3. `get_file_context` with `start_line`/`end_line` for the lines you will edit.',
+  '1. Call `get_task_context` once with the user\'s whole request.',
+  '2. If it says `complete`, or answers a single question, answer or edit from it without more searching.',
+  '3. If it says `incomplete`, run only its `Next` calls, then answer.',
+  '4. For more lines, call `get_file_context` with `ranges` like `path:120-168`, batched, plus `ctx`. Never re-read code you already have.',
   '',
-  'Do not start with workspace-wide text search, file globbing, or whole-file reads, and never re-embed code. Targeted file search is fine when a result reports low confidence or a stale or unindexed repo. In a parent folder of several repos, call `list_indexed_repos` and pass `repo`; if nothing is indexed, run `code-intel setup --repo <path>` in the terminal.',
+  'Use workspace-wide text search, file globbing, or whole-file reads only for parts marked `missing`, or a stale or unindexed repo. In a parent folder of several repos, call `list_indexed_repos` and pass `repo`; if nothing is indexed, run `code-intel setup --repo <path>` in the terminal.',
   ''
 ].join('\n');

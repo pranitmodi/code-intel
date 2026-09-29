@@ -35,6 +35,60 @@ Latency includes embedding the query. Results move by a few percent between runs
 
 Recall@10 is unchanged in aggregate, but the miss moved: 0.3.0 finds `mcpInstructions.ts` for the cross-cutting task and drops `score.ts` from the conceptual one.
 
+## Whole-session benchmark (unreleased)
+
+A small first reply is not a cheap session. In a September A/B test, the first `get_task_context` reply for a nine-part question was 1,548 tokens but held 2 of the 10 key files. The agent then made about 74 more calls and read more repository text than a filesystem-only agent. The benchmark now measures what drives that.
+
+- **Two suites.**
+  - `core` is the original 8 tasks, the regression gate.
+  - `cross-cutting` adds 7 multi-part questions, each with its essential files and labeled parts (facets).
+  - Select one with `--suite core|cross-cutting|all`.
+- **First-reply coverage.**
+  - *Essential files*: the share of essential files in the first reply.
+  - *Facets covered*: the share of labeled parts with at least one of their files present.
+- **Session cost.**
+  - Each essential file the first reply misses costs one search (~1,500 tokens) and a whole-file read, three calls per turn. The filesystem agent pays the same for essential files its grep missed.
+  - Every model call re-reads the resident context. Costs are input-token equivalents with prompt caching: cache reads 0.1×, writes 1.25×, output 5× (Anthropic list prices).
+  - The reported ratio is indexed ÷ filesystem, median over tasks.
+- **Cold latency.** `get_task_context` now runs before `search_codebase` with the same text, so its latency includes embedding the query rather than hitting a warm cache.
+
+Measured on September 29, 2026 with `Qwen3-Embedding-8B` through the OpenAI-compatible provider.
+
+- **Setup.** Each version was copied to its own scratch directory, indexed from scratch, and run on the same 15 tasks with the same benchmark code. "Before" is `main` at 0.3.2, replying in its JSON format; "after" is this release, replying in text.
+- **Contamination.** Files that quote a task prompt verbatim (the task list itself, and a unit test) are excluded from retrieval in both runs.
+- **Essential files** are counted only where they exist in that version.
+
+| Metric | Core, before | Core, after | Cross-cutting, before | Cross-cutting, after |
+| --- | ---: | ---: | ---: | ---: |
+| Recall@10 | 0.96 | 0.96 | 0.39 | **0.53** |
+| Precision@5 | 0.45 | 0.47 | 0.28 | 0.32 |
+| MRR | 0.92 | **1.00** | 0.35 | **0.60** |
+| NDCG | 0.78 | **0.83** | 0.30 | **0.50** |
+| Essential files, first reply | 0.94 | 0.94 | 0.37 | **0.54** |
+| Facets covered, first reply | — | — | 0.56 | **0.75** |
+| Session cost vs filesystem (median) | 0.29× | **0.26×** | 0.35× | **0.30×** |
+| `get_task_context` reply tokens, all tasks | 14,821 | **10,878** | 15,527 | **12,582** |
+| `get_task_context` median latency, cold | 511 ms | 571 ms | 543 ms | 648 ms |
+
+Replies are 19–27% smaller while carrying more of the code that matters.
+
+- On the 28 Sep `vscode-install` question, the first reply now has 5 of 7 essential files, up from 1.
+- A "where is `searchCodebase`" lookup returns only the definition (151 tokens).
+- **Costs and misses:**
+  - Multi-part requests run a search per facet, which adds about 100 ms. Latency is dominated by the embedding round trip to the proxy.
+  - Two cross-cutting tasks each lost one essential file: `cursor-scan-denial` 2/4 → 1/4 and `index-lock` 3/3 → 2/3.
+
+The same comparison with the offline hash embeddings (`CODE_INTEL_EMBEDDING_PROVIDER=hash`) runs in CI without network access. Its absolute numbers are lower because the embeddings only match words; use it to catch regressions, not to judge quality.
+
+Reproduce offline:
+
+```bash
+export CODE_INTEL_DB_PATH=/tmp/ci-bench CODE_INTEL_EMBEDDING_PROVIDER=hash CODE_INTEL_ANN_INDEX=off CODE_INTEL_CLOCK=2026-09-29T00:00:00Z CODE_INTEL_WATCH=0
+code-intel index --repo . && code-intel benchmark --repo . --suite all
+```
+
+Reproduce with your configured embedding model by dropping the `CODE_INTEL_EMBEDDING_PROVIDER` override. Keep `CODE_INTEL_DB_PATH` pointing at a scratch directory, so the benchmark does not touch your working index.
+
 ## What changed in 0.3.0 and why
 
 About 40% of what 0.2.0 sent was not code. The rest of the savings came from sending fewer, better files.

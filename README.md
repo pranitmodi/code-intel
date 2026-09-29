@@ -142,14 +142,14 @@ Run `code-intel mcp --repo /path/to/repo` as a stdio server. Cursor's file uses 
 
 | Tool | Use it for |
 | --- | --- |
-| `get_task_context` | First call for any new or broad task: ranked snippets, related files, confidence, within a token budget (`mode`: `minimal`, `normal`, `deep`) |
+| `get_task_context` | First call for any new or broad task, with the whole request: code for every part of it within a token budget. The reply says which parts are covered, whether it is `complete`, and lists at most three exact `Next` calls if not (`mode`: `minimal`, `normal`, `deep`) |
 | `search_symbol` | A known function, class, or type name |
 | `search_codebase` | Conceptual search with an optional `max_tokens` cap |
 | `find_references` | Where an identifier appears (textual, not compiler-resolved) |
-| `get_file_context` | Exact current source for a line range, read from disk |
+| `get_file_context` | Exact current source read from disk; batch several `ranges` such as `"src/a.ts:120-168"` in one call |
 | `get_repo_context`, `list_indexed_repos`, `index_status` | Orientation and index health |
 
-Every tool accepts an optional `repo` (path, id, or name), so an editor opened on a parent folder can address each indexed child.
+Every tool accepts an optional `repo` (path, id, or name), so an editor opened on a parent folder can address each indexed child. Each `get_task_context` reply names a `ctx`. Passing it to later calls in the same conversation replaces code the agent already has with a short note.
 
 ## Keeping the index current
 
@@ -279,6 +279,8 @@ ignore: []
 ```
 
 Environment variables: `CODE_INTEL_EMBEDDING_PROVIDER`, `CODE_INTEL_EMBEDDING_MODEL`, `CODE_INTEL_EMBEDDING_HOST`, `CODE_INTEL_EMBEDDING_BASE_URL`, `CODE_INTEL_EMBEDDING_PATH`, `CODE_INTEL_EMBEDDING_BATCH_SIZE`, `CODE_INTEL_EMBEDDING_TIMEOUT_MS`, `CODE_INTEL_EMBEDDING_API_KEY`, `CODE_INTEL_EMBEDDING_USER`, `CODE_INTEL_USE_SYSTEM_CA`, `CODE_INTEL_DB_PATH`, `CODE_INTEL_WATCH`, `CODE_INTEL_INDEX_CONCURRENCY`.
+
+MCP replies: `CODE_INTEL_MCP_FORMAT=json` returns the JSON payload of earlier versions instead of text; `CODE_INTEL_MCP_SESSION=0` turns off `ctx` de-duplication; `CODE_INTEL_MAX_REPLY_TOKENS` caps reply size. Under Claude Code, 80% of `MAX_MCP_OUTPUT_TOKENS` is used when set. For reproducible benchmarks: `CODE_INTEL_EMBEDDING_PROVIDER=hash` (offline embeddings, not for real use), `CODE_INTEL_ANN_INDEX=off`, `CODE_INTEL_CLOCK=<ISO time>`.
 
 </details>
 

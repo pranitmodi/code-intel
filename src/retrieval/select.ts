@@ -19,6 +19,20 @@ export interface SelectResult {
   estimatedTokens: number;
 }
 
+/**
+ * Highest score first, then a fixed order, so equal scores never depend on
+ * query timing or storage order. Identical inputs give identical payloads,
+ * which keeps benchmarks reproducible and client prompt caches warm.
+ */
+export function compareCandidates(a: RetrievalCandidate, b: RetrievalCandidate): number {
+  return (
+    b.score.total - a.score.total ||
+    (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) ||
+    a.startLine - b.startLine ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  );
+}
+
 function symbolKey(candidate: RetrievalCandidate): string {
   return (candidate.symbol ?? `${candidate.file}:${candidate.startLine}`).toLowerCase();
 }
@@ -27,6 +41,23 @@ function symbolKey(candidate: RetrievalCandidate): string {
 const DUPLICATE_SIMILARITY = 0.8;
 /** Short chunks share vocabulary by accident, so only compare chunks with this many distinct words. */
 const DUPLICATE_MIN_WORDS = 12;
+
+/** A chunk sharing at least this much of the smaller line range with a selected chunk of the same file repeats it. */
+const OVERLAP_SHARE = 0.5;
+
+/**
+ * Class chunks contain their method chunks, and split windows of one large
+ * symbol overlap, so the same lines could otherwise be sent twice.
+ */
+export function overlapsSelected(candidate: RetrievalCandidate, ranges: Array<[number, number]> | undefined): boolean {
+  if (!ranges) return false;
+  const length = candidate.endLine - candidate.startLine + 1;
+  return ranges.some(([start, end]) => {
+    const shared = Math.min(end, candidate.endLine) - Math.max(start, candidate.startLine) + 1;
+    if (shared <= 0) return false;
+    return shared / Math.min(length, end - start + 1) >= OVERLAP_SHARE;
+  });
+}
 
 function distinctWords(content: string): Set<string> {
   return new Set(content.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? []);
@@ -54,6 +85,7 @@ export function selectCandidates(
   const discarded: SelectResult['discarded'] = [];
   const expansionOnlyFiles = new Set<string>();
   const selectedWords: Set<string>[] = [];
+  const selectedRanges = new Map<string, Array<[number, number]>>();
   let estimatedTokens = 0;
   const minScore = options.minScore ?? 0;
 
@@ -67,6 +99,10 @@ export function selectCandidates(
       (!candidate.exactFloor && candidate.score.total < (options.minOrganicScore ?? 0))
     ) {
       discarded.push({ id: candidate.id, file: candidate.file, reason: 'min_score' });
+      continue;
+    }
+    if (overlapsSelected(candidate, selectedRanges.get(candidate.file))) {
+      discarded.push({ id: candidate.id, file: candidate.file, reason: 'overlap' });
       continue;
     }
     const fileCount = perFile.get(candidate.file) ?? 0;
@@ -113,6 +149,9 @@ export function selectCandidates(
 
     selected.push(candidate);
     selectedWords.push(words);
+    const ranges = selectedRanges.get(candidate.file) ?? [];
+    ranges.push([candidate.startLine, candidate.endLine]);
+    selectedRanges.set(candidate.file, ranges);
     estimatedTokens += candidate.estimatedTokens;
     perFile.set(candidate.file, fileCount + 1);
     perSymbol.set(key, symbolCount + 1);
@@ -138,6 +177,8 @@ export function mergeCandidates(existing: RetrievalCandidate, incoming: Retrieva
     score: winner.score,
     ...(exactFloor > 0 ? { exactFloor } : {}),
     extra: {
+      ...incoming.extra,
+      ...existing.extra,
       imports: [...new Set([...existing.extra.imports, ...incoming.extra.imports])],
       exports: [...new Set([...existing.extra.exports, ...incoming.extra.exports])],
       referencedSymbols: [

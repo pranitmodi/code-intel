@@ -11,11 +11,13 @@ export interface ChunkFileResult {
   chunks: CodeChunk[];
 }
 
-/** Structural (Tree-sitter) chunking when a grammar is available and finds symbols; text-window fallback otherwise. */
+/** Structural (Tree-sitter) chunking when a grammar is available and finds code; text-window fallback otherwise. */
 export async function chunkFile(content: string, filePath: string, config: IndexingConfig): Promise<ChunkFileResult> {
   const language = detectLanguage(filePath);
 
-  const structural = await parseStructural(content, language).catch(() => null);
+  const structural = await parseStructural(content, language, {
+    maxChars: config.maxChunkTokens * CHARS_PER_TOKEN
+  }).catch(() => null);
   if (structural && structural.length > 0) {
     return { language, chunks: structural.flatMap((chunk) => splitIfOversized(chunk, config)) };
   }

@@ -644,10 +644,16 @@ program
   .description('Compare workspace-scan, semantic-search, and task-context retrieval')
   .option('--format <fmt>', 'text or json', 'text')
   .option('--task <id>', 'run a single labeled task')
-  .action(async (options: { format?: string; task?: string }) => {
+  .option('--suite <name>', 'core (original 8 tasks), cross-cutting (multi-part questions), or all', 'all')
+  .action(async (options: { format?: string; task?: string; suite?: string }) => {
+    const suite = options.suite ?? 'all';
+    if (suite !== 'core' && suite !== 'cross-cutting' && suite !== 'all') {
+      throw new Error(`Unknown benchmark suite "${suite}". Expected core, cross-cutting, or all.`);
+    }
     const report = await runRetrievalBenchmark({
       repoRoot: resolveRepoRoot(),
       taskId: options.task,
+      suite,
       loadOptions: cliLoadOptions()
     });
     if (options.format === 'json') {
@@ -680,7 +686,10 @@ program
   .option('--start <number>', 'start line', (v) => Number.parseInt(v, 10))
   .option('--end <number>', 'end line', (v) => Number.parseInt(v, 10))
   .action(async (path: string, options: { start?: number; end?: number }) => {
-    const context = await getFileContext(resolveRepoRoot(), path, options.start, options.end);
+    const config = loadConfig(cliLoadOptions());
+    const context = await getFileContext(resolveRepoRoot(), path, options.start, options.end, {
+      allowSensitiveFiles: config.security.allowSensitiveFiles
+    });
     console.log(`${context.file}:${context.startLine}-${context.endLine}\n`);
     console.log(context.content);
   });

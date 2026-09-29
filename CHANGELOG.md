@@ -4,6 +4,70 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-29
+
+Cheaper and faster whole agent sessions, not just smaller first replies. A September A/B test found the first `get_task_context` reply was small but missed 8 of 10 key files for a multi-part question. The agent then spent more tokens on follow-up calls than a filesystem-only agent. This release fixes the causes found in the code.
+
+### Changed
+
+- **Multi-part requests are split into parts and each part is retrieved separately.**
+  - A request that lists several things is split deterministically into facets (no LLM involved).
+  - Each facet gets its own semantic, keyword, and file-name search; all embeddings are made in one provider call.
+  - The reply is chosen to cover every part before adding second chunks for any one part.
+  - Results with `Qwen3-Embedding-8B` on the new cross-cutting benchmark tasks:
+    - first-reply essential files: 0.37 → 0.54;
+    - parts covered: 0.56 → 0.75;
+    - Recall@10: 0.39 → 0.53.
+  - On the original 8 tasks, Recall@10 holds at 0.96 and MRR rises from 0.92 to 1.00.
+  - `get_task_context` replies are 19–27% smaller. See [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+- **Confidence for multi-part requests now means coverage.** Replies report each part as `covered`, `weak`, or `missing`, and say `complete` only when every part has evidence. For those requests the score is the covered share, no longer the top chunk's score.
+- **`get_task_context` replies are plain text by default.**
+  - Replies are a short manifest plus raw code blocks, which is about 16% smaller than the JSON form for the same content.
+  - The absolute repo path, per-file scores, and reasons are no longer sent.
+  - When a reply is incomplete, it lists at most three exact `Next` calls (for example one batched `get_file_context`).
+  - Set `CODE_INTEL_MCP_FORMAT=json` for the previous JSON payload.
+- **Every top-level statement is now indexed.** Before, a file with any declaration had only its declarations chunked, which missed about a third of source lines. Now indexed as well:
+  - CLI command registrations (`program.command('vscode-install')`), MCP tool registrations, and routes, as named `command` chunks;
+  - `const` arrow functions, schemas, and constants;
+  - test bodies, as `test` chunks named by title.
+  - Doc comments and `export` stay with their declaration.
+  - Class chunks no longer repeat their methods' text.
+  - The first `code-intel index` after upgrading re-chunks every file once and reuses embeddings wherever chunk text is unchanged.
+- **Exact-match boosts need exact evidence.**
+  - A prose word no longer gets the definition boost: "OpenAI" in "OpenAI-compatible", a one-word class such as `User` matched by "user", or a test title.
+  - A comment that mentions an identifier no longer counts.
+  - A generic file name such as "server" or "paths" no longer counts.
+  - Command names in backticks, `--flags`, and `ENV_KEYS` are recognised, and a string-named command or tool is found where it is registered.
+- **The agent guidance for all clients (MCP instructions, Cursor rule and skill, Copilot instructions, Cursor hook messages) teaches a bounded workflow:** one `get_task_context` with the whole request, `Next` calls only when incomplete, ranged reads with `ctx`, and no re-reads.
+
+### Added
+
+- **`get_file_context` accepts `ranges`** (`"src/a.ts:120-168"`, up to 12 per call).
+  - Output is capped at 400 lines per range and 1,200 per call. Capped output says where the rest resumes and how long the file is.
+  - It refuses `.env`, keys, and other secret-pattern files unless `security.allowSensitiveFiles` is set.
+- **Conversation contexts.**
+  - Each `get_task_context` reply names a `ctx`. Passing it back to `get_task_context`, `get_file_context`, or `search_codebase` replaces unchanged code the conversation already has with a one-line note.
+  - An exact re-request of a range still returns it in full, in case the client dropped it from context.
+  - Contexts are keyed by id, not by process, so editors that serve several chats from one server stay correct.
+  - Disable with `CODE_INTEL_MCP_SESSION=0`.
+- **`search_codebase` returns text code blocks**, with the same `ctx` de-duplication.
+- **A reply cap:** `CODE_INTEL_MAX_REPLY_TOKENS`, or 80% of Claude Code's `MAX_MCP_OUTPUT_TOKENS` when set, so a reply is never diverted to a file.
+- **Benchmark additions:**
+  - `code-intel benchmark --suite core|cross-cutting|all`.
+  - Seven multi-part tasks with facet labels.
+  - First-reply essential-file and facet coverage metrics.
+  - A session cost model that prices follow-up turns with prompt caching.
+- **Deterministic benchmark runs:** `CODE_INTEL_EMBEDDING_PROVIDER=hash` (offline embeddings for CI), `CODE_INTEL_ANN_INDEX=off`, and `CODE_INTEL_CLOCK`.
+
+### Fixed
+
+- **Opening an index no longer rebuilds all of its indexes.** `createIndex` replaces existing indexes by default, so every process start retrained every index. With IVF-PQ, first calls took 14–18 s. Only missing indexes are now created.
+- **IVF-PQ is built only at 10,000 rows or more, and queried with wider probes plus exact re-ranking.** Smaller tables use exact search, so similarity scores are no longer approximate.
+- **`get_task_context` no longer walks the whole working tree on every call to check staleness.** A live watcher reports freshness; otherwise the check is cached for 60 s and never delays a reply by more than 150 ms. The watcher's 30-second refresh no longer walks every indexed repo.
+- **Parser and syntax-tree memory is released after each file**, fixing a slow leak in long-running watchers.
+- **File names in a request match exactly** (`mcp.json` no longer matches `cursor.mcp.json`).
+- **The watcher folds new rows into the indexes periodically**, so searches do not slow down over a long session of edits.
+
 ## [0.3.2] - 2026-09-24
 
 ### Fixed

@@ -1,4 +1,5 @@
-export type EmbeddingProviderName = 'ollama' | 'openai-compatible';
+/** `hash` is a deterministic offline provider for benchmarks and tests, not for real retrieval. */
+export type EmbeddingProviderName = 'ollama' | 'openai-compatible' | 'hash';
 
 export interface EmbeddingConfig {
   provider: EmbeddingProviderName;

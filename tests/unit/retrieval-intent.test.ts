@@ -38,3 +38,37 @@ describe('analyzeQuery', () => {
     expect(intent.symbols).not.toContain('IDs');
   });
 });
+
+describe('analyzeQuery code-shaped tokens', () => {
+  const abPrompt =
+    'Explain how `code-intel vscode-install` configures VS Code: how it copes with nvm and a GUI-launched VS Code that lacks the shell PATH, user versus workspace installation, prompting for OpenAI-compatible embedding credentials, preserving JSONC comments in mcp.json, and what happens when --repo is missing.';
+
+  it('keeps CLI commands and flags as exact terms and prose brand words out of symbols', () => {
+    const intent = analyzeQuery(abPrompt);
+    expect(intent.exactTerms).toEqual(expect.arrayContaining(['vscode-install', '--repo']));
+    expect(intent.symbols).not.toContain('OpenAI');
+    expect(intent.exactTerms).not.toContain('OpenAI');
+  });
+
+  it('still treats multi-word class names as symbols', () => {
+    expect(analyzeQuery('Where is OpenAICompatibleEmbeddingProvider?').symbols).toContain(
+      'OpenAICompatibleEmbeddingProvider'
+    );
+    expect(analyzeQuery('Where is LanceVectorStore defined?').symbols).toContain('LanceVectorStore');
+  });
+
+  it('recognises environment keys and snake_case identifiers', () => {
+    const intent = analyzeQuery('Set CODE_INTEL_EMBEDDING_API_KEY before calling get_task_context');
+    expect(intent.symbols).toEqual(expect.arrayContaining(['CODE_INTEL_EMBEDDING_API_KEY', 'get_task_context']));
+    expect(intent.exactTerms).toEqual(expect.arrayContaining(['CODE_INTEL_EMBEDDING_API_KEY', 'get_task_context']));
+  });
+
+  it('reads mcp.json as a JSON file name, not mcp.js', () => {
+    expect(analyzeQuery(abPrompt).files).toEqual(['mcp.json']);
+  });
+
+  it('counts the parts of a multi-part request', () => {
+    expect(analyzeQuery(abPrompt).clauses).toBeGreaterThanOrEqual(4);
+    expect(analyzeQuery('Where is searchCodebase implemented?').clauses).toBe(1);
+  });
+});

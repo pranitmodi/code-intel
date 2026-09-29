@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { statSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import { estimateTokensFromChars } from '../utils/tokens.js';
 
 const RG_GLOBS = ['!node_modules/**', '!.git/**', '!dist/**', '!build/**'];
@@ -11,6 +12,10 @@ export interface WorkspaceScanResult {
   estimatedTokens: number;
   latencyMs: number;
   files: string[];
+  /** Tokens of the `rg --files` listing. */
+  listTokens: number;
+  /** Tokens of the `rg -n -C 2` match dump. */
+  grepTokens: number;
 }
 
 function rgBin(): string {
@@ -87,11 +92,38 @@ export function workspaceScan(repo: string, keyword: string): WorkspaceScanResul
     linesRead,
     estimatedTokens: globTokens + grepDumpTokens + readTopFilesTokens,
     latencyMs: Date.now() - started,
-    files: files.slice(0, MAX_READ_FILES)
+    files: files.slice(0, MAX_READ_FILES),
+    listTokens: globTokens,
+    grepTokens: grepDumpTokens
   };
+}
+
+/** Estimated tokens of reading a repo file whole, or 0 when it cannot be read. */
+export function fileTokens(repo: string, relativePath: string): number {
+  try {
+    return estimateTokensFromChars(statSync(join(repo, relativePath)).size);
+  } catch {
+    return 0;
+  }
 }
 
 export function keywordFromPrompt(prompt: string): string {
   const ident = prompt.match(/\b[A-Za-z][A-Za-z0-9]{3,}\b/g);
   return ident?.[ident.length - 1] ?? prompt.split(/\s+/)[0] ?? prompt;
+}
+
+/**
+ * Files that quote `text` verbatim (a task prompt copied into a test or doc).
+ * They would "answer" the task by restating it, so benchmarks exclude them.
+ */
+export function filesQuoting(repo: string, text: string): string[] {
+  const needle = text.slice(0, 60);
+  if (needle.length < 30) return [];
+  const found = spawnSync(rgBin(), globArgs(repo, ['-l', '-F', '--', needle]), { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+  if (found.error || (found.status !== 0 && found.status !== 1)) return [];
+  return (found.stdout ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((file) => relative(repo, file).split(sep).join('/'));
 }

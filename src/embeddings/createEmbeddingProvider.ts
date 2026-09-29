@@ -1,5 +1,6 @@
 import type { EmbeddingConfig } from '../config/types.js';
 import type { EmbeddingProvider } from './EmbeddingProvider.js';
+import { HashEmbeddingProvider } from './HashEmbeddingProvider.js';
 import { OllamaEmbeddingProvider } from './OllamaEmbeddingProvider.js';
 import { OpenAICompatibleEmbeddingProvider } from './OpenAICompatibleEmbeddingProvider.js';
 
@@ -11,6 +12,10 @@ export function createEmbeddingProvider(
   config: EmbeddingConfig,
   options: CreateEmbeddingProviderOptions = {}
 ): EmbeddingProvider {
+  if (config.provider === 'hash') {
+    return new HashEmbeddingProvider({ model: config.model, dimensions: options.dimensions });
+  }
+
   if (config.provider === 'ollama') {
     return new OllamaEmbeddingProvider({
       host: config.host,

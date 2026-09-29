@@ -32,6 +32,18 @@ describe('agent guidance', () => {
     }
   });
 
+  it('teaches the bounded workflow: one task call, Next only when incomplete, ranged reads with ctx', () => {
+    for (const text of [MCP_SERVER_INSTRUCTIONS, LOCAL_CODE_INTEL_USER_RULE, LOCAL_CODE_INTEL_SKILL, LOCAL_CODE_INTEL_INSTRUCTIONS]) {
+      expect(text).toMatch(/complete/);
+      expect(text).toMatch(/Next/);
+      expect(text).toMatch(/ctx/);
+      expect(text).toMatch(/ranges/);
+      expect(text).toMatch(/missing/);
+    }
+    // Claude Code truncates server instructions beyond this length.
+    expect(MCP_SERVER_INSTRUCTIONS.length).toBeLessThan(2048);
+  });
+
   it('lists only indexed repos that overlap the workspace', () => {
     const repos = [
       repo('app', '/work/app'),

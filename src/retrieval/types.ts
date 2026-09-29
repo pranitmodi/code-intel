@@ -1,4 +1,5 @@
 import type { ChunkExtraMetadata } from '../chunker/chunkMetadata.js';
+import type { FacetCoverage } from './coverage.js';
 
 export interface RetrievalScore {
   total: number;
@@ -76,6 +77,25 @@ export interface ContextPackage {
   };
   confidence: RetrievalConfidence;
   trace?: RetrievalTrace;
+  /** Per-part coverage of a multi-part request; absent for a focused one. */
+  facets?: FacetCoverage[];
+  /** Every part of the request has evidence in the reply, so no follow-up search is needed. */
+  complete?: boolean;
+  /**
+   * Chunks not sent that best address the parts the reply leaves weak or
+   * missing, with their size: the exact reads an agent should make next.
+   */
+  followUps?: FollowUp[];
+}
+
+export interface FollowUp {
+  facetId: string;
+  label: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+  symbol?: string;
+  estimatedTokens: number;
 }
 
 export type ContextMode = 'minimal' | 'normal' | 'deep';

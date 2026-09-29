@@ -1,8 +1,25 @@
 # code-intel: Project Status, Evidence, Bottlenecks, and Roadmap
 
 Last updated: September 29, 2026  
-Current public release: `@pranitmodi/code-intel` 0.3.2  
+Current public release: `@pranitmodi/code-intel` 0.3.2 (0.4.0 prepared)  
 Repository commit at review: `e900a22`
+
+> **0.4.0 update.** Most of the P0/P1 work in sections 12–15 has landed:
+> - task-facet decomposition, facet-coverage confidence, and bounded `Next` reads (12.2–12.4);
+> - per-conversation `ctx` de-duplication (12.5);
+> - exact command/flag handling (12.6);
+> - a cross-cutting benchmark suite with a session cost model (12.1, offline part).
+>
+> Indexing now covers every top-level statement. Startup no longer rebuilds indexes, and no call walks the working tree.
+>
+> With `Qwen3-Embedding-8B`, cross-cutting first-reply essential-file coverage rose from 0.37 to 0.54 and Recall@10 from 0.39 to 0.53, while replies shrank 19–27%. See [BENCHMARKS.md](BENCHMARKS.md).
+>
+> Still open:
+> - live multi-client agent runs (12.1 live, 12.10);
+> - import/call-graph expansion (12.7);
+> - confidence calibration (12.8);
+> - external repos (12.9);
+> - editor doctor (12.12).
 
 ## 1. Executive summary
 

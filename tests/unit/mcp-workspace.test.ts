@@ -160,6 +160,7 @@ describe('MCP workspace resolution and watcher refresh', () => {
       defaultRepoRoot: repoRoot,
       config,
       listRepos: async () => repos.map((repo) => ({ ...repo, stale: false })),
+      listRegistered: () => repos,
       resolve: async () => ({ ok: true as const, context }),
       status: async () => ({}),
       evict: (path: string) => evicted.push(path)

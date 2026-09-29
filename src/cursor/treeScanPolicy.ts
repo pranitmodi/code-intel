@@ -11,7 +11,7 @@ const EXPLORE_TASK =
   /\b(explor(e|ing)|search the (code|repo|codebase)|find where|how does)\b/i;
 
 export const TREE_SCAN_DENY_MESSAGE =
-  'This repo is already indexed: use MCP user-local-code-intelligence first (get_task_context, search_symbol, search_codebase, then get_file_context). Grep/Glob/explore is allowed after those miss or report low confidence, or against a specific file or subdirectory, not the whole repo.';
+  'This repo is already indexed: call MCP user-local-code-intelligence get_task_context with the whole request and run only its Next calls (get_file_context ranges with ctx). Grep/Glob/explore is allowed for parts it marks missing, after a low-confidence reply, or against a specific file or subdirectory, not the whole repo.';
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';

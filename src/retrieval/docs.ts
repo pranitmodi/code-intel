@@ -3,6 +3,11 @@ const DOC_NAME = /(?:^|\/)(?:readme|changelog|contributing|license|notice|author
 const DOC_QUERY = /\b(?:docs?|documentation|readme|changelog|guide|tutorial|markdown|faq|wiki)\b|\.(?:md|mdc|mdx|rst)\b/i;
 const EXPLANATION_QUERY = /\b(?:how|why|explain|overview|architecture|design|concepts?|works?)\b/i;
 
+/** Whether the task asks about documentation itself. */
+export function isDocTask(query: string): boolean {
+  return DOC_QUERY.test(query);
+}
+
 export function isDocPath(filePath: string): boolean {
   const normalized = filePath.replaceAll('\\', '/');
   return DOC_EXT.test(normalized) || DOC_NAME.test(normalized);

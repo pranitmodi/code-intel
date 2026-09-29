@@ -2,16 +2,21 @@ import { describe, expect, it } from 'vitest';
 import type { RetrievalCandidate } from '../../src/retrieval/types.js';
 import { selectCandidates } from '../../src/retrieval/select.js';
 
+let nextLine = 1;
+
 function candidate(
   overrides: Partial<RetrievalCandidate> & { id: string; file: string; scoreTotal: number }
 ): RetrievalCandidate {
   const estimatedTokens = overrides.estimatedTokens ?? 10;
+  // Distinct line ranges by default so only tests about overlap produce it.
+  const startLine = overrides.startLine ?? nextLine;
+  nextLine += 20;
   return {
     symbol: overrides.symbol ?? 'fn',
     symbolType: 'function',
     parentSymbol: null,
-    startLine: 1,
-    endLine: 10,
+    startLine,
+    endLine: overrides.endLine ?? startLine + 9,
     content: 'x'.repeat(estimatedTokens * 4),
     lastIndexedAt: null,
     extra: { imports: [], exports: [], referencedSymbols: [], isTest: false, isConfig: false },
@@ -36,6 +41,18 @@ function candidate(
 }
 
 describe('selectCandidates', () => {
+  it('drops a chunk whose lines are mostly inside one already selected', () => {
+    const ranked = [
+      candidate({ id: 'class', file: 'a.ts', symbol: 'Service', scoreTotal: 1, startLine: 10, endLine: 80 }),
+      candidate({ id: 'method', file: 'a.ts', symbol: 'Service.run', scoreTotal: 0.9, startLine: 30, endLine: 40 }),
+      candidate({ id: 'other-file', file: 'b.ts', symbol: 'run', scoreTotal: 0.8, startLine: 30, endLine: 40 }),
+      candidate({ id: 'neighbour', file: 'a.ts', symbol: 'helper', scoreTotal: 0.7, startLine: 78, endLine: 120 })
+    ];
+    const result = selectCandidates(ranked, { limit: 10, maxChunksPerFile: 4, maxChunksPerSymbol: 2 });
+    expect(result.selected.map((c) => c.id)).toEqual(['class', 'other-file', 'neighbour']);
+    expect(result.discarded).toContainEqual({ id: 'method', file: 'a.ts', reason: 'overlap' });
+  });
+
   it('caps chunks per file and per symbol', () => {
     const ranked = [
       candidate({ id: '1', file: 'a.ts', symbol: 'foo', scoreTotal: 1 }),

@@ -4,7 +4,7 @@ import { basename } from 'node:path';
 import { loadConfig } from '../config/load.js';
 import { createContext, type AppContext } from '../context.js';
 import { listIndexedRepos } from '../indexer/registry.js';
-import { serializeToolResult, taskContextPayload } from '../mcp/payload.js';
+import { renderTaskContextReply } from '../mcp/render.js';
 import { getTaskContext } from '../retrieval/taskContext.js';
 import { estimateTokensFromChars, estimateTokensFromText } from '../utils/tokens.js';
 import { writeBenchmark } from './store.js';
@@ -111,7 +111,7 @@ async function searchSide(context: AppContext, query: string): Promise<{
   return {
     searchMs,
     resultCount: pkg.files.reduce((sum, file) => sum + file.chunks.length, 0),
-    searchTokens: estimateTokensFromText(serializeToolResult(taskContextPayload(context.repoRoot, pkg)))
+    searchTokens: estimateTokensFromText(renderTaskContextReply(context.repoRoot, pkg))
   };
 }
 

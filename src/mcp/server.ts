@@ -1,10 +1,11 @@
+import { basename } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod/v4';
 import { searchCodebase } from '../search/searchCodebase.js';
 import { searchSymbol } from '../search/searchSymbol.js';
 import { findReferences } from '../search/findReferences.js';
-import { getFileContext } from '../search/getFileContext.js';
+import { parseRangeRef, readFileRanges, renderFileRanges } from '../search/getFileContext.js';
 import { getRepoContext } from '../search/getRepoContext.js';
 import { getTaskContext } from '../retrieval/taskContext.js';
 import { grantFilesystemFallback } from '../retrieval/fallback.js';
@@ -12,8 +13,10 @@ import { MCP_SERVER_INSTRUCTIONS } from '../cursor/mcpInstructions.js';
 import { createMcpRuntime, type McpRuntime, type ResolveOk } from './runtime.js';
 import { startWorkspaceWatchers } from './watchOnStart.js';
 import { recordMcpRetrieval } from '../usage/record.js';
-import { serializeToolResult, taskContextPayload } from './payload.js';
-import { getIndexStatus } from '../indexer/status.js';
+import { serializeToolResult } from './payload.js';
+import { renderSearchResults, renderTaskContextReply, replyFormat, replyTokenCap } from './render.js';
+import { sessionDedupEnabled, SessionStore } from './session.js';
+import { sharedFreshness } from './freshness.js';
 import { recoverySteps } from '../cli/formatCliFailure.js';
 import { PACKAGE_VERSION } from '../version.js';
 
@@ -22,6 +25,11 @@ const SHUTDOWN_GRACE_MS = 5_000;
 
 function textResult(value: unknown, text = serializeToolResult(value)) {
   return { content: [{ type: 'text' as const, text }] };
+}
+
+/** A tool result already rendered for the model; sent as-is instead of as JSON. */
+class RenderedText {
+  constructor(readonly text: string) {}
 }
 
 const repoField = z
@@ -48,13 +56,17 @@ async function withRepo(
   }
   try {
     const value = await fn(resolved.context);
-    const text = serializeToolResult(value);
+    const text = value instanceof RenderedText ? value.text : serializeToolResult(value);
     if (usageTool) {
-      recordMcpRetrieval({
-        tool: usageTool,
-        repo: resolved.context.repoRoot,
-        payloadText: text,
-        latencyMs: Date.now() - started
+      const latencyMs = Date.now() - started;
+      const repoRoot = resolved.context.repoRoot;
+      // Accounting reads config and registry files; keep it off the reply path.
+      setImmediate(() => {
+        try {
+          recordMcpRetrieval({ tool: usageTool, repo: repoRoot, payloadText: text, latencyMs });
+        } catch {
+          // Usage accounting must never affect a tool call.
+        }
       });
     }
     return textResult(value, text);
@@ -69,7 +81,13 @@ async function withRepo(
 }
 
 /** Exposes the local index to any MCP client (Cursor, VS Code, Claude Code, Codex, ...) — read-only (spec section 20/22). */
-export function buildServer(runtime: McpRuntime): McpServer {
+const ctxField = z
+  .string()
+  .optional()
+  .describe('The ctx id from an earlier get_task_context reply in this conversation; skips code already sent.');
+
+export function buildServer(runtime: McpRuntime, sessions: SessionStore = new SessionStore()): McpServer {
+  const dedup = sessionDedupEnabled();
   const server = new McpServer(
     { name: 'local-code-intelligence', version: PACKAGE_VERSION },
     { instructions: MCP_SERVER_INSTRUCTIONS }
@@ -105,10 +123,11 @@ export function buildServer(runtime: McpRuntime): McpServer {
         limit: z.number().int().positive().max(50).optional(),
         min_score: z.number().min(0).max(1).optional(),
         max_tokens: z.number().int().positive().optional(),
+        ctx: ctxField,
         repo: repoField
       })
     },
-    async ({ query, limit, min_score, max_tokens, repo }) =>
+    async ({ query, limit, min_score, max_tokens, ctx, repo }) =>
       withRepo(
         runtime,
         repo,
@@ -120,7 +139,10 @@ export function buildServer(runtime: McpRuntime): McpServer {
             context.config.search,
             { limit, minScore: min_score, maxTokens: max_tokens }
           );
-          return { repo: context.repoRoot, results };
+          if (replyFormat() === 'json') return { repo: context.repoRoot, results };
+          const ledger = dedup ? sessions.get(ctx, context.repoRoot) : undefined;
+          if (ledger) ledger.calls += 1;
+          return new RenderedText(renderSearchResults(results, { repoName: basename(context.repoRoot), query, ledger }));
         },
         'search_codebase'
       )
@@ -153,22 +175,45 @@ export function buildServer(runtime: McpRuntime): McpServer {
     'get_file_context',
     {
       description:
-        'Reads exact source content from the repository (authoritative — not the vector DB) for a file and optional line range. Prefer a line range over reading the whole file.',
+        'Exact current source from the working tree. Pass ranges like "src/a.ts:120-168" (several at once) or file with start_line/end_line. Long ranges are capped and say where they resume.',
       inputSchema: z.object({
-        file: z.string().describe('Path relative to the repository root'),
+        ranges: z
+          .array(z.string())
+          .max(12)
+          .optional()
+          .describe('Ranges to read in one call: "path:start-end", "path:line", or "path"'),
+        file: z.string().optional().describe('Path relative to the repository root'),
         start_line: z.number().int().positive().optional(),
         end_line: z.number().int().positive().optional(),
+        ctx: ctxField,
         repo: repoField
       })
     },
-    async ({ file, start_line, end_line, repo }) =>
+    async ({ ranges, file, start_line, end_line, ctx, repo }) =>
       withRepo(
         runtime,
         repo,
-        async (context) => ({
-          repo: context.repoRoot,
-          ...(await getFileContext(context.repoRoot, file, start_line, end_line))
-        }),
+        async (context) => {
+          const requests = [
+            ...(ranges ?? []).map(parseRangeRef),
+            ...(file ? [{ file, startLine: start_line, endLine: end_line }] : [])
+          ];
+          if (requests.length === 0) throw new Error('Pass ranges, or file with an optional start_line/end_line.');
+          const results = await readFileRanges(context.repoRoot, requests, {
+            allowSensitiveFiles: context.config.security.allowSensitiveFiles
+          });
+          if (replyFormat() === 'json') {
+            const [single] = results;
+            if (!ranges && single) {
+              if (single.error) throw new Error(single.error);
+              return { repo: context.repoRoot, file: single.file, startLine: single.startLine, endLine: single.endLine, content: single.content, totalLines: single.totalLines, omittedLines: single.omittedLines };
+            }
+            return { repo: context.repoRoot, ranges: results };
+          }
+          const ledger = dedup ? sessions.get(ctx, context.repoRoot) : undefined;
+          if (ledger) ledger.calls += 1;
+          return new RenderedText(renderFileRanges(results, ledger));
+        },
         'get_file_context'
       )
   );
@@ -196,21 +241,26 @@ export function buildServer(runtime: McpRuntime): McpServer {
         task: z.string().describe('Natural-language coding task or question'),
         max_tokens: z.number().int().positive().optional(),
         mode: z.enum(['minimal', 'normal', 'deep']).optional(),
+        ctx: ctxField,
         repo: repoField
       })
     },
-    async ({ task, max_tokens, mode, repo }) =>
+    async ({ task, max_tokens, mode, ctx, repo }) =>
       withRepo(
         runtime,
         repo,
         async (context) => {
-          const status = await getIndexStatus(context.repoRoot);
+          const stale = await sharedFreshness.peek(context.repoRoot);
           const pkg = await getTaskContext(task, context, {
             maxTokens: max_tokens,
+            maxTokensCap: replyTokenCap(),
             mode,
-            stale: status.stale
+            stale
           });
-          return taskContextPayload(context.repoRoot, pkg);
+          // A new question opens a context; passing ctx continues one, so code sent for an earlier question is not resent.
+          const ledger = dedup ? (sessions.get(ctx, context.repoRoot) ?? sessions.open(context.repoRoot)) : undefined;
+          if (ledger) ledger.calls += 1;
+          return new RenderedText(renderTaskContextReply(context.repoRoot, pkg, replyFormat(), ledger));
         },
         'get_task_context'
       )
@@ -247,7 +297,8 @@ export async function startMcpServer(
   options: { watch?: boolean } = {}
 ): Promise<void> {
   const runtime = await createMcpRuntime(repoRoot);
-  const server = buildServer(runtime);
+  // One context store for the process: contexts are named, so every connection can share it safely.
+  const sessions = new SessionStore();
   const watchEnabled = options.watch !== false && runtime.config.indexing.watch;
   const label = runtime.defaultRepoRoot ?? '(no default repo — pass repo on each tool call)';
   console.error(
@@ -263,7 +314,11 @@ export async function startMcpServer(
       })
     : Promise.resolve(undefined);
 
-  const connection = serveStdio(() => server);
+  // A fresh server per connection (the SDK also builds one for a discarded probe); state lives in `sessions`.
+  const connection = serveStdio(() => buildServer(runtime, sessions));
+  // Open the default index while the client is still initialising, so the
+  // first tool call does not pay for connecting to LanceDB.
+  if (runtime.defaultRepoRoot) void runtime.resolve().catch(() => undefined);
 
   // Watchers keep the event loop alive, so the process must exit explicitly
   // once the client is gone; editors that crash only close stdin.

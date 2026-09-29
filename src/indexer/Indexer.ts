@@ -7,7 +7,8 @@ import { discoverFiles, type DiscoveredFile } from '../discovery/discover.js';
 import { looksBinary } from '../discovery/binary-check.js';
 import { containsLikelySecret } from '../discovery/secret-scan.js';
 import { chunkFile } from '../chunker/chunker.js';
-import { buildChunkExtraMetadata, serializeChunkExtraMetadata } from '../chunker/chunkMetadata.js';
+import { buildChunkExtraMetadata, chunkerVersionOf, serializeChunkExtraMetadata } from '../chunker/chunkMetadata.js';
+import { CHUNKER_VERSION } from '../chunker/version.js';
 import { computeChunkId, hashChunkContent, hashFileContent } from '../hashing/hash.js';
 import { normalizeVector } from '../embeddings/vectorMath.js';
 import type { EmbeddingProvider } from '../embeddings/EmbeddingProvider.js';
@@ -66,8 +67,18 @@ export interface IndexSummary {
 }
 
 /** Discover -> hash-diff -> parse/chunk -> embed only what changed -> upsert (spec sections 11 & 14). */
+/**
+ * Watcher runs fold their rows into the indexes this often. Search still sees
+ * unindexed rows, but by scanning them, so a long session of small edits
+ * would otherwise slow every query a little more.
+ */
+const OPTIMIZE_EVERY_CHANGED_RUNS = 20;
+const OPTIMIZE_EVERY_MS = 10 * 60 * 1000;
+
 export class Indexer {
   private readonly storeLock = new Mutex();
+  private changedRunsSinceOptimize = 0;
+  private lastOptimizedAt = Date.now();
 
   constructor(private readonly deps: IndexerDeps) {}
 
@@ -152,6 +163,8 @@ export class Indexer {
     }
 
     await vectorStore.optimize();
+    this.changedRunsSinceOptimize = 0;
+    this.lastOptimizedAt = Date.now();
     summary.durationMs = Date.now() - started;
 
     const filesInIndex = summary.filesIndexed + summary.filesUnchanged + summary.filesRenamed;
@@ -213,6 +226,17 @@ export class Indexer {
           summary.filesSkipped++;
           logger.warn(`[SKIP] ${relativePath} exceeds the embedding model context window after chunking`);
         }
+      }
+
+      this.changedRunsSinceOptimize += 1;
+      const written = summary.filesIndexed + summary.filesDeleted + summary.filesRenamed > 0;
+      if (
+        written &&
+        (this.changedRunsSinceOptimize >= OPTIMIZE_EVERY_CHANGED_RUNS || Date.now() - this.lastOptimizedAt >= OPTIMIZE_EVERY_MS)
+      ) {
+        await vectorStore.optimize();
+        this.changedRunsSinceOptimize = 0;
+        this.lastOptimizedAt = Date.now();
       }
 
       summary.durationMs = Date.now() - started;
@@ -329,8 +353,11 @@ export class Indexer {
       if (previousHash !== undefined) {
         if (previousHash === fileHash) {
           const existing = await this.deps.vectorStore.getChunksForFile(file.relativePath);
-          const missingMetadata = existing.some((chunk) => !chunk.extraMetadata);
-          if (!missingMetadata) {
+          // Unchanged content still needs re-chunking when an older chunker produced it.
+          const outdated = existing.some(
+            (chunk) => !chunk.extraMetadata || chunkerVersionOf(chunk.extraMetadata) < CHUNKER_VERSION
+          );
+          if (!outdated) {
             summary.filesUnchanged++;
             return 'unchanged';
           }
@@ -368,6 +395,9 @@ export class Indexer {
     const { language, chunks } = await chunkFile(content, file.relativePath, config.indexing);
     const existing = await this.storeLock.run(() => vectorStore.getChunksForFile(file.relativePath));
     const existingById = new Map(existing.map((e) => [e.id, e]));
+    // Chunks whose text is unchanged keep their embedding even when their id
+    // changes (a block that moved, or a re-chunk after a chunker upgrade).
+    const embeddingByHash = new Map(existing.map((e) => [e.contentHash, e.embedding]));
 
     const now = new Date().toISOString();
     const newIds = new Set<string>();
@@ -377,10 +407,12 @@ export class Indexer {
     const occurrences = new Map<string, number>();
 
     chunks.forEach((chunk, index) => {
+      const contentHash = hashChunkContent(chunk.content);
       const identity: string[] = [
         chunk.parentSymbol ?? '',
         chunk.symbolType ?? 'text',
-        chunk.symbolName ?? `#${index}`
+        // An unnamed block is identified by its text, so inserting code above it keeps its id.
+        chunk.symbolName ?? (chunk.symbolType === 'block' ? `h:${contentHash.slice(0, 16)}` : `#${index}`)
       ];
       // Same-named siblings (overloads, repeated headings) share a symbol identity. LanceDB rejects a
       // merge batch holding two rows with one key, so repeats are suffixed; the first keeps the bare
@@ -393,9 +425,10 @@ export class Indexer {
         ...(repeat === 0 ? identity : [...identity, `@${repeat}`])
       );
       newIds.add(id);
-      const contentHash = hashChunkContent(chunk.content);
       const prior = existingById.get(id);
-      const reused = prior !== undefined && prior.contentHash === contentHash;
+      const reusedEmbedding =
+        prior !== undefined && prior.contentHash === contentHash ? prior.embedding : embeddingByHash.get(contentHash);
+      const reused = reusedEmbedding !== undefined && reusedEmbedding.length > 0;
 
       records.push({
         id,
@@ -411,11 +444,14 @@ export class Indexer {
         content: chunk.content,
         content_hash: contentHash,
         file_hash: fileHash,
-        embedding: reused && prior ? prior.embedding : [],
+        embedding: reused ? reusedEmbedding : [],
         last_indexed_at: now,
         git_commit: null,
         extra_metadata: serializeChunkExtraMetadata(
-          buildChunkExtraMetadata(file.relativePath, content, chunk.content, language)
+          buildChunkExtraMetadata(file.relativePath, content, chunk.content, language, {
+            ...chunk.meta,
+            v: CHUNKER_VERSION
+          })
         )
       });
 

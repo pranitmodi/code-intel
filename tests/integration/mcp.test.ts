@@ -47,7 +47,7 @@ async function connectMcp(repoRoot: string, dbHome: string): Promise<Client> {
   const transport = new StdioClientTransport({
     command: resolve(PROJECT_ROOT, 'node_modules/.bin/tsx'),
     args: [resolve(PROJECT_ROOT, 'src/cli/index.ts'), 'mcp', '--no-watch', '--repo', repoRoot],
-    env: { ...(process.env as Record<string, string>), CODE_INTEL_DB_PATH: dbHome }
+    env: { ...(process.env as Record<string, string>), CODE_INTEL_DB_PATH: dbHome, CODE_INTEL_MCP_FORMAT: 'json' }
   });
   await client.connect(transport);
   return client;

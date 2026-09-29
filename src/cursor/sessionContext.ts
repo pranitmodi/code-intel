@@ -9,7 +9,7 @@ const MAX_LISTED_REPOS = 8;
  */
 export function sessionContext(workspaceRoots: string[], repos: RegistryEntry[]): string {
   const lines = [
-    'Local code index active (MCP namespace user-local-code-intelligence). Start with get_task_context or search_symbol, then get_file_context for a line range; avoid repo-wide Grep/Glob first.'
+    'Local code index active (MCP namespace user-local-code-intelligence). Call get_task_context once with the whole request and run only its Next calls; avoid repo-wide Grep/Glob first.'
   ];
   const populated = repos.filter((repo) => repo.filesIndexed > 0);
   if (workspaceRoots.length === 0) {

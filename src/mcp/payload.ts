@@ -11,6 +11,10 @@ export function serializeToolResult(value: unknown): string {
 export interface TaskContextPayload {
   repo: string;
   confidence: ContextPackage['confidence'];
+  /** Multi-part requests: every part has evidence below, so no follow-up search is needed. */
+  complete?: boolean;
+  /** Multi-part requests: each part and whether the chunks below cover it. */
+  coverage?: Array<{ part: string; status: 'covered' | 'weak' | 'missing' }>;
   estimatedTokens: number;
   files: Array<{
     path: string;
@@ -34,6 +38,12 @@ export function taskContextPayload(repo: string, pkg: ContextPackage): TaskConte
   return {
     repo,
     confidence: pkg.confidence,
+    ...(pkg.facets
+      ? {
+          complete: pkg.complete ?? false,
+          coverage: pkg.facets.map((facet) => ({ part: facet.label.slice(0, 80), status: facet.status }))
+        }
+      : {}),
     estimatedTokens: pkg.estimatedTokens,
     files: pkg.files.map((file) => ({
       path: file.path,

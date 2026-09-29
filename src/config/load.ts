@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { load as parseYaml } from 'js-yaml';
+import { HASH_EMBEDDING_MODEL } from '../embeddings/HashEmbeddingProvider.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import type { CodeIntelConfig, EmbeddingProviderName, RawConfigFile } from './types.js';
 
@@ -21,7 +22,7 @@ function readConfigFile(path: string): RawConfigFile | undefined {
 
 function parseEmbeddingProvider(value: string | undefined, fallback: EmbeddingProviderName): EmbeddingProviderName {
   if (value === undefined) return fallback;
-  if (value === 'ollama' || value === 'openai-compatible') return value;
+  if (value === 'ollama' || value === 'openai-compatible' || value === 'hash') return value;
   throw new Error(
     `Unsupported embedding provider "${value}". Expected "ollama" or "openai-compatible".`
   );
@@ -200,6 +201,10 @@ export function loadConfig(options: LoadConfigOptions = {}): CodeIntelConfig {
     ...config,
     database: { ...config.database, path: expandHome(config.database.path) }
   };
+  // The hash provider names its own model, so index state and config agree on it.
+  if (config.embedding.provider === 'hash' && !config.embedding.model.startsWith('hash')) {
+    config = { ...config, embedding: { ...config.embedding, model: HASH_EMBEDDING_MODEL } };
+  }
 
   return config;
 }

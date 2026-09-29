@@ -26,6 +26,15 @@ function loadGitignore(repoRoot: string): string[] {
   return readFileSync(gitignorePath, 'utf-8').split('\n');
 }
 
+const secretPatterns = ignoreFactory().add(SECRET_FILE_PATTERNS);
+
+/** True for paths such as `.env`, `*.pem`, or `id_rsa` that are excluded as likely secrets. */
+export function isSecretPath(relativePath: string): boolean {
+  const posixPath = toPosix(relativePath).replace(/^\.\/+/, '');
+  if (!posixPath || posixPath.startsWith('../') || posixPath === '..') return false;
+  return secretPatterns.ignores(posixPath);
+}
+
 export function isIndexableRelativePath(repoRoot: string, relativePath: string, options: DiscoveryOptions): boolean {
   const posixPath = toPosix(relativePath);
   if (!posixPath || posixPath.startsWith('../') || posixPath === '..') return false;

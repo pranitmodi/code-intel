@@ -47,6 +47,21 @@ export interface WatchPlan {
   directories: string[];
 }
 
+/** What a live watcher knows about index freshness, so callers need not walk the tree. */
+export interface WatchSnapshot {
+  /** An index run is in progress. */
+  running: boolean;
+  /** When the oldest change that is not yet indexed arrived (ms since epoch), or null when none are queued. */
+  pendingSince: number | null;
+  /** The last run failed or found another writer holding the lock; its changes are queued for retry. */
+  failing: boolean;
+  /** A run has completed since the watcher started, so edits made while it was off are indexed. */
+  caughtUp: boolean;
+}
+
+/** Stops the watcher; `snapshot()` reports its current freshness. */
+export type WatchHandle = (() => Promise<void>) & { snapshot(): WatchSnapshot };
+
 export interface WatchRepoOptions {
   onIndex?: (summary: IndexSummary) => void;
   /** Run one incremental catch-up as soon as the watcher starts. */
@@ -131,7 +146,7 @@ function repoPathMapper(repoRoot: string): (path: string) => string {
 export async function watchRepo(
   context: AppContext,
   options: WatchRepoOptions = {}
-): Promise<() => Promise<void>> {
+): Promise<WatchHandle> {
   const indexer = new Indexer({
     repoRoot: context.repoRoot,
     repoId: context.repoId,
@@ -157,6 +172,10 @@ export async function watchRepo(
   let stopped = false;
   let current: Promise<void> | undefined;
   let pendingFull = Boolean(options.immediate);
+  let pendingSince: number | null = pendingFull ? Date.now() : null;
+  let inFlightSince: number | null = null;
+  let failing = false;
+  let caughtUp = false;
   const queued: WatchFsEvent[] = [];
 
   const indexBatch = async (batch: WatchFsEvent[], forceFull: boolean): Promise<IndexSummary | undefined> => {
@@ -190,9 +209,14 @@ export async function watchRepo(
     const batch = queued.splice(0, queued.length);
     const forceFull = pendingFull;
     pendingFull = false;
+    // Changes arriving during this run start a new pending window.
+    inFlightSince = pendingSince;
+    pendingSince = null;
     try {
       const summary = await indexBatch(batch, forceFull);
       retryDelayMs = 0;
+      failing = false;
+      caughtUp = true;
       if (summary) {
         recordWatchSuccess(context.paths.watchStatusFile);
         options.onIndex?.(summary);
@@ -205,6 +229,8 @@ export async function watchRepo(
       }
     } catch (error) {
       failed = true;
+      failing = true;
+      pendingSince = earliest(pendingSince, inFlightSince ?? Date.now());
       queued.unshift(...batch);
       if (forceFull || queued.length > MAX_QUEUED_EVENTS) {
         pendingFull = true;
@@ -222,6 +248,7 @@ export async function watchRepo(
       }
     } finally {
       running = false;
+      inFlightSince = null;
     }
     if (!failed && !stopped && (pendingFull || queued.length > 0)) await run();
   };
@@ -250,6 +277,7 @@ export async function watchRepo(
         return;
       }
       if (events.length === 0) return;
+      pendingSince ??= Date.now();
       for (const event of events) queued.push({ type: event.type, path: toRepoPath(event.path) });
       if (events.length > WATCH_FULL_INDEX_THRESHOLD) pendingFull = true;
       logger.info(`[WATCH] ${events.length} change(s) — indexing in ${debounceMs}ms`);
@@ -261,11 +289,25 @@ export async function watchRepo(
   logger.info(`[WATCH] watching ${context.repoRoot} (debounce ${debounceMs}ms)`);
   if (options.immediate) kick();
 
-  return async () => {
+  const stop = async (): Promise<void> => {
     stopped = true;
     if (debounceTimer) clearTimeout(debounceTimer);
     if (retryTimer) clearTimeout(retryTimer);
     await subscription.unsubscribe();
     await current;
   };
+  return Object.assign(stop, {
+    snapshot: (): WatchSnapshot => ({
+      running,
+      pendingSince: earliest(pendingSince, running ? inFlightSince : null),
+      failing,
+      caughtUp
+    })
+  });
+}
+
+function earliest(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.min(a, b);
 }

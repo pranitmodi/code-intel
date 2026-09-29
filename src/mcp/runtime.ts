@@ -17,12 +17,16 @@ import {
 } from '../indexer/registry.js';
 import { INDEX_HINT, getIndexStatus, listIndexedReposWithStale } from '../indexer/status.js';
 import { readState } from '../indexer/state.js';
+import { sharedFreshness } from './freshness.js';
 
 export interface McpRuntime {
   defaultRepoRoot?: string;
   config: CodeIntelConfig;
   resolve(repo?: string): Promise<ResolveOk | ResolveErr>;
+  /** Registry entries with cached stale flags; never walks a working tree on the request path. */
   listRepos(): Promise<Array<RegistryEntry & { stale: boolean | null }>>;
+  /** Registry entries only (no freshness), for callers that just need the indexed paths. */
+  listRegistered(): RegistryEntry[];
   status(repo?: string): Promise<unknown>;
   /** Drop a cached open index, e.g. after the repo was cleaned or rebuilt elsewhere. */
   evict(repoRoot: string): void;
@@ -162,7 +166,10 @@ export async function createMcpRuntime(defaultRepoRoot?: string): Promise<McpRun
       cache.delete(computeRepoId(repoRoot));
     },
     listRepos() {
-      return listIndexedReposWithStale(config.database.path);
+      return listIndexedReposWithStale(config.database.path, (repoRoot) => sharedFreshness.peek(repoRoot));
+    },
+    listRegistered() {
+      return listIndexedRepos(config.database.path);
     },
     async status(repo) {
       if (repo?.trim()) {

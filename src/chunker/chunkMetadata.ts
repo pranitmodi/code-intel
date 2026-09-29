@@ -4,6 +4,23 @@ export interface ChunkExtraMetadata {
   referencedSymbols: string[];
   isTest: boolean;
   isConfig: boolean;
+  /** Chunker version that produced the chunk; absent before version 3. */
+  v?: number;
+  /** Declaration up to its body. */
+  signature?: string;
+  /** Functions and methods the chunk calls. */
+  calls?: string[];
+  /** Code-shaped string literals: command names, flags, env keys, routes. */
+  literals?: string[];
+  /** For a class header: its members with line ranges (`run:L12-40`). */
+  defines?: string[];
+}
+
+export interface StructuralFacts {
+  signature?: string;
+  calls?: string[];
+  literals?: string[];
+  defines?: string[];
 }
 
 const CONFIG_BASENAMES = new Set([
@@ -131,19 +148,36 @@ export function buildChunkExtraMetadata(
   filePath: string,
   fileContent: string,
   chunkContent: string,
-  language: string
+  language: string,
+  facts: StructuralFacts & { v?: number } = {}
 ): ChunkExtraMetadata {
   return {
     imports: extractImports(fileContent, language),
     exports: extractExports(fileContent, language),
     referencedSymbols: extractReferencedSymbols(chunkContent),
     isTest: isTestPath(filePath),
-    isConfig: isConfigPath(filePath)
+    isConfig: isConfigPath(filePath),
+    ...(facts.v !== undefined ? { v: facts.v } : {}),
+    ...(facts.signature ? { signature: facts.signature } : {}),
+    ...(facts.calls?.length ? { calls: facts.calls } : {}),
+    ...(facts.literals?.length ? { literals: facts.literals } : {}),
+    ...(facts.defines?.length ? { defines: facts.defines } : {})
   };
+}
+
+/** Chunker version recorded in stored metadata; 0 for chunks written before versions were recorded. */
+export function chunkerVersionOf(raw: string | null | undefined): number {
+  if (!raw) return 0;
+  const match = /"v":(\d+)/.exec(raw);
+  return match ? Number(match[1]) : 0;
 }
 
 export function serializeChunkExtraMetadata(meta: ChunkExtraMetadata): string {
   return JSON.stringify(meta);
+}
+
+function stringList(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.map(String) : undefined;
 }
 
 export function parseChunkExtraMetadata(raw: string | null | undefined): ChunkExtraMetadata {
@@ -152,14 +186,20 @@ export function parseChunkExtraMetadata(raw: string | null | undefined): ChunkEx
   }
   try {
     const parsed = JSON.parse(raw) as Partial<ChunkExtraMetadata>;
+    const calls = stringList(parsed.calls);
+    const literals = stringList(parsed.literals);
+    const defines = stringList(parsed.defines);
     return {
-      imports: Array.isArray(parsed.imports) ? parsed.imports.map(String) : [],
-      exports: Array.isArray(parsed.exports) ? parsed.exports.map(String) : [],
-      referencedSymbols: Array.isArray(parsed.referencedSymbols)
-        ? parsed.referencedSymbols.map(String)
-        : [],
+      imports: stringList(parsed.imports) ?? [],
+      exports: stringList(parsed.exports) ?? [],
+      referencedSymbols: stringList(parsed.referencedSymbols) ?? [],
       isTest: Boolean(parsed.isTest),
-      isConfig: Boolean(parsed.isConfig)
+      isConfig: Boolean(parsed.isConfig),
+      ...(typeof parsed.v === 'number' ? { v: parsed.v } : {}),
+      ...(typeof parsed.signature === 'string' ? { signature: parsed.signature } : {}),
+      ...(calls ? { calls } : {}),
+      ...(literals ? { literals } : {}),
+      ...(defines ? { defines } : {})
     };
   } catch {
     return { imports: [], exports: [], referencedSymbols: [], isTest: false, isConfig: false };

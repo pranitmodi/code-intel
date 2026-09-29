@@ -59,6 +59,8 @@ export async function runDoctor(options: {
       healthy = false;
       console.log(formatCliFailure(error));
     }
+  } else if (config.embedding.provider === 'hash') {
+    console.log(`[INFO] Using deterministic "${config.embedding.model}" embeddings (offline benchmarks only, not for real retrieval)`);
   } else {
     try {
       const provider = createEmbeddingProvider(config.embedding);

@@ -98,6 +98,23 @@ describe('watchRepo against a real filesystem and LanceDB', () => {
     await waitFor(async () => (await indexedFiles()).includes('src/existing.ts'), 'initial catch-up');
   });
 
+  it('reports its freshness through snapshot()', async () => {
+    const handle = await watchRepo(context, { immediate: true, retryBaseMs: 100, retryMaxMs: 400 });
+    stops.push(handle);
+    expect(handle.snapshot().caughtUp).toBe(false);
+    await waitFor(async () => handle.snapshot().caughtUp, 'startup catch-up reported');
+    await waitFor(async () => handle.snapshot().pendingSince === null, 'nothing queued after catch-up');
+
+    embeddings.failing = true;
+    await writeFile(join(repoRoot, 'src', 'queued.ts'), 'export const queued = 1;\n');
+    await waitFor(async () => handle.snapshot().failing, 'failed batch reported');
+    expect(handle.snapshot().pendingSince).not.toBeNull();
+
+    embeddings.failing = false;
+    await waitFor(async () => !handle.snapshot().failing, 'retry succeeded');
+    await waitFor(async () => handle.snapshot().pendingSince === null, 'queue drained');
+  });
+
   it('indexes new files, re-indexes edits, and removes deleted files', async () => {
     await startWatching();
     await waitFor(async () => (await indexedFiles()).includes('src/existing.ts'), 'initial catch-up');

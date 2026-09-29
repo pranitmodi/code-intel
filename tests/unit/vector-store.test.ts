@@ -114,6 +114,16 @@ describe('LanceVectorStore', () => {
     expect(results[0]?.id).toBe('close');
   });
 
+  it('reopening an existing table does not rebuild its indexes', async () => {
+    await store.upsertChunks([makeChunk({})]);
+    await store.optimize();
+    const before = await store.tableVersion();
+    const reopened = await LanceVectorStore.open(dbDir, DIMENSIONS);
+    expect(await reopened.tableVersion()).toBe(before);
+    const results = await reopened.fullTextSearch('refreshToken', 5);
+    expect(results.map((row) => row.id)).toEqual(['chunk-1']);
+  });
+
   it('optimizes a small table without requiring an ANN index', async () => {
     await store.upsertChunks([makeChunk({})]);
     await expect(store.optimize()).resolves.toBeUndefined();
