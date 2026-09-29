@@ -7,7 +7,7 @@ import { resolveRepoPaths } from '../../src/config/paths.js';
 import type { AppContext } from '../../src/context.js';
 import type { EmbeddingProvider } from '../../src/embeddings/EmbeddingProvider.js';
 import { acquireLock } from '../../src/indexer/lock.js';
-import { watchRepo } from '../../src/indexer/watch.js';
+import { watchRepo, type WatchHandle } from '../../src/indexer/watch.js';
 import { computeRepoId } from '../../src/utils/repo-id.js';
 import { LanceVectorStore } from '../../src/vector-store/LanceVectorStore.js';
 
@@ -69,8 +69,10 @@ describe('watchRepo against a real filesystem and LanceDB', () => {
     return [...(await context.vectorStore.getAllFileHashes()).keys()].sort();
   }
 
-  async function startWatching(target = context): Promise<void> {
-    stops.push(await watchRepo(target, { immediate: true, retryBaseMs: 100, retryMaxMs: 400 }));
+  async function startWatching(target = context): Promise<WatchHandle> {
+    const handle = await watchRepo(target, { immediate: true, retryBaseMs: 100, retryMaxMs: 400 });
+    stops.push(handle);
+    return handle;
   }
 
   beforeEach(async () => {
@@ -203,8 +205,10 @@ describe('watchRepo against a real filesystem and LanceDB', () => {
   });
 
   it('waits for another indexer to release the lock, then indexes the pending change', async () => {
-    await startWatching();
+    const handle = await startWatching();
     await waitFor(async () => (await indexedFiles()).includes('src/existing.ts'), 'initial catch-up');
+    // Rows land before the run finishes optimizing and saving state, which still holds the lock.
+    await waitFor(async () => handle.snapshot().caughtUp && !handle.snapshot().running, 'initial run finished');
 
     const release = acquireLock(context.paths.lockFile);
     await writeFile(join(repoRoot, 'src', 'while-locked.ts'), 'export const locked = true;\n');
