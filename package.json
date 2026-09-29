@@ -47,7 +47,8 @@
     "SECURITY.md",
     "CODE_OF_CONDUCT.md",
     "docs/ARCHITECTURE.md",
-    "docs/BENCHMARKS.md"
+    "docs/BENCHMARKS.md",
+    "docs/PROJECT_STATUS_AND_ROADMAP.md"
   ],
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
