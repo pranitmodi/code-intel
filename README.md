@@ -13,26 +13,29 @@ AI coding agents find code the expensive way: they list the tree, grep, and read
 
 ## Results
 
-Measured on this repository across eight labeled coding tasks (find a symbol, explain a subsystem, add a feature, fix a bug, refactor, find tests, locate configuration):
+Version 0.4.0 compared with 0.3.2, measured on this repository with `Qwen3-Embedding-8B`. Both versions were indexed from scratch and run on the same tasks. The *core* suite is 8 labeled tasks (find a symbol, explain a subsystem, add a feature, fix a bug, refactor, find tests, locate configuration). The *multi-part* suite is 7 questions that each ask about several things at once.
 
-| | Result |
-| --- | ---: |
-| Input tokens for all eight tasks | **15,589** instead of 233,680 for a list + grep + read-files scan (**93% fewer**) |
-| Average reduction per task | **85%** |
-| Labeled relevant files found in the top 10 (Recall@10) | **0.96** |
-| Rank of the first relevant file (MRR) | **0.92** |
-| `get_task_context` latency, median / slowest, including embedding the query | 58 ms / 152 ms |
+| | 0.3.2 | 0.4.0 |
+| --- | ---: | ---: |
+| Multi-part: key files in the first reply | 0.37 | **0.54** |
+| Multi-part: parts of the question covered | 0.56 | **0.75** |
+| Multi-part: relevant files in the top 10 (Recall@10) | 0.39 | **0.53** |
+| Core: Recall@10 | 0.96 | **0.96** |
+| Core: rank of the first relevant file (MRR) | 0.92 | **1.00** |
+| Reply tokens, all 15 tasks | 30,348 | **23,460** (23% fewer) |
+| Modelled session cost vs a filesystem-only agent (multi-part) | 0.35× | **0.30×** |
+| `get_task_context` median latency, cold, including the remote query embedding | 0.53 s | 0.60 s |
 
-Version 0.3.0 sends 41% fewer tokens than 0.2.0 for the same tasks at the same Recall@10, and precision@5 rose from 0.30 to 0.43 ([what changed](CHANGELOG.md)).
+Replies are smaller but carry more of the code that matters. A multi-part question now gets code for each part, a list of which parts are covered, and at most three exact follow-up reads when something is missing, so the agent needs fewer turns. The earlier 0.3.0 measurement found `get_task_context` sent 93% fewer tokens than a list + grep + read-files scan (15,589 vs 233,680 tokens over the core tasks).
 
-These numbers come from one TypeScript repository and one embedding model (`Qwen3-Embedding-8B`), with tokens estimated at four characters per token. They are a regression benchmark, not a promise about your bill. Measure your own repositories with `code-intel benchmark` and `code-intel savings --benchmark`. See [the methodology](docs/BENCHMARKS.md).
+These numbers come from one TypeScript repository and one embedding model, with tokens estimated at four characters per token. The session cost is modelled, not billed. They are a regression benchmark, not a promise about your bill. Measure your own repositories with `code-intel benchmark` and `code-intel savings --benchmark`. See [the methodology](docs/BENCHMARKS.md).
 
 ## What makes it different
 
 - **Task-sized answers, not search hits.** `get_task_context` finds the definition, the files it imports, and related tests and configuration. It then drops duplicates and weak matches and stops at a token budget. A "where is `X` implemented?" question returns the definition, not eight loosely similar files.
 - **Indexed once, shared everywhere.** The index lives on disk outside your repository. Cursor, VS Code, Claude Code, and Codex query the same index instead of each re-reading the tree.
 - **Always current.** The MCP server watches the repository and re-embeds only the chunks that changed. Renames, moved folders, `.gitignore` edits, and provider outages are handled.
-- **Honest about confidence.** Every answer carries a confidence score. When the index is stale or the match is weak, the agent is told to fall back to a targeted file search instead of trusting a thin result.
+- **Honest about coverage.** Each answer says which parts of the request it covers and whether it is complete. It lists the exact reads that would close any gap. When the index is stale or a part is missing, the agent is told to fall back to a targeted file search instead of trusting a thin result.
 - **Local by default.** With the default [Ollama](https://ollama.com) provider, source, embeddings, and the [LanceDB](https://lancedb.github.io/lancedb/) database never leave your machine. There is no telemetry. An OpenAI-compatible embeddings endpoint is supported when you need one.
 
 ## Quick start
@@ -73,7 +76,7 @@ flowchart LR
 
 **Write path:** discover files (respecting `.gitignore` and skipping secrets), split them into symbol-level chunks with Tree-sitter, hash each chunk, and embed only chunks whose hash changed.
 
-**Read path:** embed the task, combine vector, keyword, symbol, and file-name matches, and expand to imports, references, tests, and configuration. Then remove near-duplicates and padding, and pack the rest under a token budget with a confidence score.
+**Read path:** split a multi-part task into its parts, and embed them all in one call. For each part, combine vector, keyword, symbol, and file-name matches, and expand to imports, references, tests, and configuration. Then pick code so that every part is covered before any part gets more, drop near-duplicates, and pack the result under a token budget. The reply reports which parts are covered.
 
 Details: [architecture](docs/ARCHITECTURE.md), [benchmarks](docs/BENCHMARKS.md), and
 [security model](SECURITY.md).
